@@ -75,7 +75,7 @@ Do not place `.env`, uploaded datasets, generated metadata, or logs under source
 - Validate and run workflows, including filters, column selection and renaming, aggregation, two-input joins, and CSV/XLSX/JSON exports. Runs report per-node status; failed nodes skip their dependents while independent branches can finish.
 - Add a Preview Data node to inspect the actual intermediate rows at that pipeline step, including searchable and paginated output.
 - Review run status, failures, metrics, and downloadable outputs in Execution History and Processed Data.
-- Design data-backed dashboards with 14 chart types, KPI cards, tables, text, images, sections, and interactive filters. Save dashboard JSON designs, reopen or duplicate them, preview layouts, and export the complete dashboard as a high-resolution PNG.
+- Design data-backed dashboards with 16 chart types, category-aware percentage aggregation, configurable chart legends, KPI cards, tables, text, images, sections, and interactive filters. Chart field mappings are validated against the selected dataset schema; save dashboard JSON designs, reopen or duplicate them, preview responsive layouts, and export the complete dashboard as a high-resolution PNG.
 - Dashboard counts and recent activity are derived from locally stored metadata.
 
 ## API

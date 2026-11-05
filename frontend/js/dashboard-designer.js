@@ -2,9 +2,32 @@ import { api, escapeHTML, showToast } from './app.js'
 
 const chartTypes = new Set([
   'bar', 'horizontalBar', 'line', 'area', 'pie', 'donut', 'scatter', 'bubble',
-  'histogram', 'radar', 'treemap', 'funnel', 'waterfall', 'heatmap',
+  'stackedBar', 'percentStackedBar', 'histogram', 'radar', 'treemap', 'funnel',
+  'waterfall', 'heatmap',
 ])
-const palette = ['#174D35', '#206B48', '#269B65', '#43B97A', '#80D6A5', '#B4E6C7', '#DDF4E6']
+const percentageChartTypes = new Set([
+  'bar', 'horizontalBar', 'line', 'area', 'pie', 'donut', 'stackedBar', 'percentStackedBar',
+])
+const aggregationChartTypes = new Set([
+  ...percentageChartTypes, 'waterfall', 'radar', 'treemap', 'funnel',
+])
+const gridLineChartTypes = new Set([
+  'bar', 'horizontalBar', 'stackedBar', 'percentStackedBar', 'line', 'area',
+  'scatter', 'bubble', 'histogram', 'radar', 'waterfall', 'heatmap',
+])
+const dataLabelChartTypes = new Set([
+  'bar', 'horizontalBar', 'stackedBar', 'percentStackedBar', 'line', 'area',
+  'pie', 'donut', 'histogram', 'radar', 'treemap', 'funnel', 'waterfall', 'heatmap',
+])
+const palette = ['#174D35', '#206B48', '#26885B', '#34A36B', '#4EBA7E', '#76C996', '#A5DDB8']
+const aggregationLabels = {
+  sum: 'Sum',
+  average: 'Average',
+  count: 'Count',
+  min: 'Minimum',
+  max: 'Maximum',
+  percentage: 'Percentage',
+}
 const templates = {
   sales: [['kpi', 'Total sales'], ['bar', 'Sales by category'], ['line', 'Sales trend'], ['table', 'Sales details']],
   finance: [['kpi', 'Total amount'], ['area', 'Financial trend'], ['waterfall', 'Amount changes'], ['table', 'Financial records']],
@@ -12,7 +35,8 @@ const templates = {
   general: [['kpi', 'Rows in dataset'], ['bar', 'Values by category'], ['line', 'Dataset trend'], ['table', 'Dataset records']],
 }
 const labels = {
-  bar: 'Bar Chart', horizontalBar: 'Horizontal Bar', line: 'Line Chart', area: 'Area Chart',
+  bar: 'Bar Chart', horizontalBar: 'Horizontal Bar', stackedBar: 'Stacked Bar',
+  percentStackedBar: '100% Stacked Bar', line: 'Line Chart', area: 'Area Chart',
   pie: 'Pie Chart', donut: 'Donut Chart', scatter: 'Scatter Plot', bubble: 'Bubble Chart',
   histogram: 'Histogram', radar: 'Radar Chart', treemap: 'Treemap', funnel: 'Funnel Chart',
   waterfall: 'Waterfall', heatmap: 'Heatmap', kpi: 'KPI Card', table: 'Data Table',
@@ -46,7 +70,23 @@ function makeComponent(type, schema = []) {
       dimension,
       measure,
       measure2: schema.find((column) => column.kind === 'numeric' && column.name !== measure)?.name || measure,
+      sizeMeasure: type === 'bubble' ? measure : '',
       aggregation: measure ? 'sum' : 'count',
+      percentageMode: type === 'stackedBar' || type === 'percentStackedBar' ? 'category' : 'total',
+      showDataLabels: type === 'pie' || type === 'donut',
+      showPercentage: type === 'pie' || type === 'donut',
+      showTooltips: true,
+      showPercentageInTooltip: type === 'pie' || type === 'donut',
+      showGridLines: true,
+      decimalPrecision: 1,
+      numberFormat: 'standard',
+      chartBackground: 'transparent',
+      showLegend: true,
+      legendPosition: 'bottom',
+      legendOrientation: 'horizontal',
+      legendTextSize: 9,
+      legendAlign: 'center',
+      legendItemSpacing: 10,
       filterMode: 'categorical',
       text: 'Add a heading or helpful context for your dashboard.',
       headingLevel: 'h2',
@@ -65,11 +105,14 @@ function safeDashboard(value) {
     id: dashboard.id || dashboard.dashboard_id,
     name: dashboard.name || 'Untitled dashboard',
     theme: { ...blankDashboard().theme, ...(dashboard.theme || {}) },
-    components: Array.isArray(dashboard.components) ? dashboard.components.map((component) => ({
-      ...makeComponent(component.type || 'bar'),
-      ...component,
-      config: { ...makeComponent(component.type || 'bar').config, ...(component.config || {}) },
-    })) : [],
+    components: Array.isArray(dashboard.components) ? dashboard.components.map((component) => {
+      const defaults = makeComponent(component.type || 'bar')
+      return {
+        ...defaults,
+        ...component,
+        config: { ...defaults.config, ...(component.config || {}) },
+      }
+    }) : [],
   }
 }
 
@@ -131,14 +174,15 @@ function setDatasetInfo() {
 }
 
 async function loadDatasets(preselectId = '') {
-  const payload = await api('/api/datasets')
+  const source = document.getElementById('designer-dataset-source')?.value || 'all'
+  const payload = await api(`/api/datasets${source === 'all' ? '' : `?source=${encodeURIComponent(source)}`}`)
   state.datasets = recordList(payload)
   const select = document.getElementById('designer-dataset')
   select.replaceChildren(new Option('Select a dataset', ''))
   state.datasets.forEach((dataset) => {
     const id = dataset.file_id || dataset.dataset_id || dataset.id
     if (!id) return
-    const option = new Option(`${dataset.filename || dataset.name || id}${dataset.status === 'processed' ? ' · processed' : ''}`, id)
+    const option = new Option(`${dataset.filename || dataset.name || id}${dataset.status === 'processed' ? ' · processed' : ' · imported'}`, id)
     select.add(option)
   })
   const selected = preselectId || state.dashboard.dataset_id
@@ -180,27 +224,10 @@ async function selectDataset(id) {
     : state.schema.map((column) => column.name)
   state.rows = asRows(previewPayload)
   state.dataset = { ...state.dataset, ...schemaPayload }
-  state.dashboard.components.forEach((component) => {
-    if (!component.config.dimension) component.config.dimension = defaultDimension()
-    if (!component.config.measure) {
-      component.config.measure = defaultMeasure()
-      if (!component.config.measure && (chartTypes.has(component.type) || component.type === 'kpi')) {
-        component.config.aggregation = 'count'
-      }
-    }
-  })
   setStatus('Unsaved changes')
   setDatasetInfo()
   renderComponents()
   renderConfig()
-}
-
-function defaultDimension() {
-  return state.schema.find((column) => column.kind !== 'numeric')?.name || state.columns[0] || ''
-}
-
-function defaultMeasure() {
-  return state.schema.find((column) => column.kind === 'numeric')?.name || ''
 }
 
 function snapshotRows() {
@@ -226,8 +253,54 @@ function snapshotRows() {
 function fieldOptions(selected, kind = 'any') {
   const columns = state.schema.length ? state.schema : state.columns.map((name) => ({ name, kind: 'text' }))
   const available = kind === 'numeric' ? columns.filter((column) => column.kind === 'numeric') : columns
+  const selectedAvailable = available.some((column) => column.name === selected)
+  const unavailable = selected && !selectedAvailable
+    ? `<option value="${escapeHTML(selected)}" selected>${escapeHTML(state.columns.includes(selected) ? `${selected} (not numeric)` : `Missing field: ${selected}`)}</option>`
+    : ''
   const options = available.map((column) => `<option value="${escapeHTML(column.name)}"${column.name === selected ? ' selected' : ''}>${escapeHTML(column.name)}</option>`).join('')
-  return `<option value="">${kind === 'numeric' ? 'Select numeric field' : 'Select a field'}</option>${options}`
+  return `<option value="">${kind === 'numeric' ? 'Select numeric field' : 'Select a field'}</option>${unavailable}${options}`
+}
+
+function chartFieldIssues(component) {
+  if (!state.columns.length) return []
+  const { type, config } = component
+  const issues = []
+  const check = (key, label, { required = true, numeric = false } = {}) => {
+    const value = config[key]
+    if (!value) {
+      if (required) issues.push(`Select a ${label}.`)
+      return
+    }
+    if (!state.columns.includes(value)) {
+      issues.push(`The saved ${label} "${value}" is not in this dataset. Choose an available field.`)
+      return
+    }
+    if (numeric && state.schema.length && !state.schema.some((column) => column.name === value && column.kind === 'numeric')) {
+      issues.push(`The selected ${label} "${value}" is not numeric. Choose a numeric field.`)
+    }
+  }
+  if (type !== 'histogram') check('dimension', 'category field')
+  if (type === 'scatter' || type === 'bubble') {
+    check('measure2', 'X-axis field', { numeric: true })
+    check('measure', 'Y-axis field', { numeric: true })
+  } else {
+    const measureRequired = !aggregationChartTypes.has(type) || config.aggregation !== 'count'
+    check('measure', 'value field', {
+      required: measureRequired,
+      numeric: config.aggregation !== 'count',
+    })
+  }
+  if (type === 'heatmap') check('measure2', 'second category field')
+  if (type === 'stackedBar' || type === 'percentStackedBar') check('seriesField', 'series field')
+  if (type === 'bubble') check('sizeMeasure', 'bubble size field', { numeric: true })
+  return issues
+}
+
+function aggregationTitle(config, measure = config.measure) {
+  const method = aggregationLabels[config.aggregation] || 'Value'
+  return config.aggregation === 'count' && !measure
+    ? 'Row count'
+    : `${method}${measure ? ` of ${measure}` : ''}`
 }
 
 function configField(label, key, value, options = {}) {
@@ -245,6 +318,10 @@ function configField(label, key, value, options = {}) {
   return `<label class="designer-config-field">${escapeHTML(label)}${input}</label>`
 }
 
+function configToggle(label, key, checked) {
+  return `<label class="designer-config-field designer-config-toggle">${escapeHTML(label)}<input id="config-${key}" data-config-key="${key}" type="checkbox"${checked ? ' checked' : ''}></label>`
+}
+
 function renderConfig() {
   const content = document.getElementById('designer-config-content')
   const component = state.dashboard.components.find((item) => item.id === state.selectedId)
@@ -260,24 +337,90 @@ function renderConfig() {
       <section class="designer-config-section"><h3>APPEARANCE</h3>
         ${configField('Accent green', 'theme-accent', state.dashboard.theme.accent, { choices: [['#174D35', 'Forest'], ['#206B48', 'Deep green'], ['#269B65', 'Emerald'], ['#43B97A', 'Fresh green'], ['#80D6A5', 'Light green']] })}
         ${configField('Surface', 'theme-surface', state.dashboard.theme.surface, { choices: [['#FFFFFF', 'White'], ['#FCFFFD', 'Soft white'], ['#F4FBF6', 'Pale green'], ['#EAF6EE', 'Light green']] })}
-        ${configField('Text color', 'theme-text', state.dashboard.theme.text, { choices: [['#111111', 'Black'], ['#174D35', 'Forest green']] })}
+        ${configField('Text color', 'theme-text', state.dashboard.theme.text, { choices: [['#174D35', 'Forest green'], ['#206B48', 'Deep green']] })}
       </section>
       <section class="designer-config-section"><h3>LAYOUT</h3><p class="designer-config-field">Drag dashboard cards to reorder them. Choose a size in a component's settings.</p><div class="designer-config-actions"><button type="button" data-dashboard-action="clear">Clear components</button></div></section>
     `
   } else {
     const { type, config } = component
     let fields = configField('Title', 'title', component.title)
+    let dataFields = ''
     if (chartTypes.has(type)) {
-      fields += configField('Category / dimension', 'dimension', config.dimension, { field: 'any' })
+      const datasetName = state.dataset?.filename || state.dataset?.name || 'No dataset selected'
+      dataFields += `<div class="designer-config-dataset"><span>Dataset</span><strong>${escapeHTML(datasetName)}</strong></div>`
+      if (type !== 'histogram') {
+        const dimensionLabel = type === 'scatter' || type === 'bubble'
+          ? 'Series / category'
+          : type === 'horizontalBar'
+            ? 'Y-axis / category'
+            : ['bar', 'line', 'area', 'stackedBar', 'percentStackedBar', 'waterfall'].includes(type)
+              ? 'X-axis / category'
+              : 'Category field'
+        dataFields += configField(dimensionLabel, 'dimension', config.dimension, { field: 'any' })
+      }
+      if (type === 'stackedBar' || type === 'percentStackedBar') {
+        dataFields += configField('Grouping / series field', 'seriesField', config.seriesField, { field: 'any' })
+      }
       if (['scatter', 'bubble', 'heatmap'].includes(type)) {
-        fields += configField(type === 'heatmap' ? 'Second dimension' : 'X-axis measure', 'measure2', config.measure2, { field: 'numeric' })
+        dataFields += configField(type === 'heatmap' ? 'Y-axis / second category' : 'X-axis value', 'measure2', config.measure2, { field: type === 'heatmap' ? 'any' : 'numeric' })
       }
-      if (!['pie', 'donut', 'radar', 'treemap', 'funnel'].includes(type)) {
-        fields += configField('Value / measure', 'measure', config.measure, { field: 'numeric' })
+      const measureLabel = type === 'horizontalBar' || type === 'scatter' || type === 'bubble'
+        ? 'Y-axis value'
+        : type === 'histogram' ? 'Value field' : type === 'heatmap' ? 'Color / value field' : 'Y-axis / value'
+      dataFields += configField(measureLabel, 'measure', config.measure, { field: config.aggregation === 'count' ? 'any' : 'numeric' })
+      if (type === 'bubble') dataFields += configField('Bubble size', 'sizeMeasure', config.sizeMeasure, { field: 'numeric' })
+      if (type === 'histogram') dataFields += configField('Histogram bins', 'bins', config.bins || 8, { type: 'number', min: 2, max: 30 })
+      if (aggregationChartTypes.has(type)) {
+        const choices = [['sum', 'Sum'], ['average', 'Average'], ['count', 'Count'], ['min', 'Minimum'], ['max', 'Maximum']]
+        if (percentageChartTypes.has(type)) choices.push(['percentage', 'Percentage (%)'])
+        dataFields += configField('Aggregation', 'aggregation', config.aggregation || 'sum', { choices })
       }
-      if (type === 'bubble') fields += configField('Bubble size', 'sizeMeasure', config.sizeMeasure || config.measure, { field: 'numeric' })
-      if (type === 'histogram') fields += configField('Histogram bins', 'bins', config.bins || 8, { type: 'number', min: 2, max: 30 })
-      fields += configField('Aggregation', 'aggregation', config.aggregation || 'sum', { choices: [['sum', 'Sum'], ['average', 'Average'], ['count', 'Count'], ['min', 'Minimum'], ['max', 'Maximum']] })
+      if (percentageChartTypes.has(type) && ['line', 'area', 'stackedBar', 'percentStackedBar'].includes(type)) {
+        const choices = ['line', 'area'].includes(type)
+          ? [['total', 'Share of total'], ['changeFromFirst', 'Change from first value']]
+          : type === 'percentStackedBar'
+            ? [['category', 'Share within each category']]
+            : [['total', 'Share of grand total'], ['category', 'Share within each category']]
+        dataFields += configField('Percentage calculation', 'percentageMode', config.percentageMode || (type === 'percentStackedBar' ? 'category' : 'total'), { choices })
+      }
+    }
+    let chartSections = ''
+    if (chartTypes.has(type)) {
+      const precision = Number.isInteger(config.decimalPrecision) ? config.decimalPrecision : 1
+      const issues = chartFieldIssues(component)
+      const warning = issues.length
+        ? `<p class="designer-config-warning" role="alert">${issues.map(escapeHTML).join(' ')}</p>`
+        : ''
+      chartSections = `
+        <section class="designer-config-section"><h3>DATA CONFIGURATION</h3>${configField('Chart type', 'type', type, { choices: [...chartTypes].map((chartType) => [chartType, labels[chartType]]) })}${fields}${dataFields}${warning}</section>
+        <section class="designer-config-section"><h3>CHART APPEARANCE</h3>
+          ${dataLabelChartTypes.has(type) ? configToggle('Show data labels', 'showDataLabels', config.showDataLabels) : ''}
+          ${gridLineChartTypes.has(type) ? configToggle('Show grid lines', 'showGridLines', config.showGridLines !== false) : ''}
+          ${configToggle('Show tooltips', 'showTooltips', config.showTooltips !== false)}
+          ${configField('Chart background', 'chartBackground', config.chartBackground || 'transparent', { choices: [['transparent', 'Transparent'], ['#FFFFFF', 'White'], ['#F4FBF6', 'Pale mint']] })}
+          ${configField('Chart size', 'size', component.size || 'medium', { choices: [['small', 'Compact'], ['medium', 'Standard'], ['large', 'Wide']] })}
+        </section>
+        <section class="designer-config-section"><h3>DISPLAY OPTIONS</h3>
+          ${percentageChartTypes.has(type) ? configToggle('Show percentage labels', 'showPercentage', config.showPercentage) : ''}
+          ${percentageChartTypes.has(type) ? configToggle('Show percentage in tooltips', 'showPercentageInTooltip', config.showPercentageInTooltip) : ''}
+          ${configField('Decimal precision', 'decimalPrecision', precision, { type: 'number', min: 0, max: 2 })}
+          ${configField('Number format', 'numberFormat', config.numberFormat || 'standard', { choices: [['standard', 'Standard'], ['compact', 'Compact (K/M)']] })}
+        </section>
+        <section class="designer-config-section"><h3>LEGEND CONFIGURATION</h3>
+          ${type === 'heatmap' ? '<p class="designer-config-note">Heatmaps use a continuous color scale instead of a categorical legend.</p>' : `
+            ${configToggle('Show Legend', 'showLegend', config.showLegend !== false)}
+            ${configField('Legend position', 'legendPosition', config.legendPosition || 'bottom', { choices: [['top', 'Top'], ['bottom', 'Bottom'], ['left', 'Left'], ['right', 'Right']] })}
+            ${configField('Legend orientation', 'legendOrientation', config.legendOrientation || 'horizontal', { choices: [['horizontal', 'Horizontal'], ['vertical', 'Vertical']] })}
+            ${configField('Legend text size', 'legendTextSize', config.legendTextSize ?? 9, { type: 'number', min: 8, max: 18 })}
+            ${configField('Legend alignment', 'legendAlign', config.legendAlign || 'center', { choices: [['left', 'Left'], ['center', 'Center'], ['right', 'Right']] })}
+            ${configField('Legend item spacing', 'legendItemSpacing', config.legendItemSpacing ?? 10, { type: 'number', min: 0, max: 40 })}
+          `}
+        </section>
+        <section class="designer-config-section"><h3>COMPONENT</h3><div class="designer-config-actions">
+          <button type="button" data-component-action="up">Move up</button><button type="button" data-component-action="down">Move down</button>
+          <button type="button" data-component-action="duplicate">Duplicate</button><button class="danger" type="button" data-component-action="delete">Delete</button>
+        </div></section>
+      `
     }
     if (type === 'kpi') {
       fields += configField('Metric field', 'measure', config.measure, { field: 'numeric' })
@@ -295,7 +438,7 @@ function renderConfig() {
       fields += configField('Filter type', 'filterMode', config.filterMode || 'categorical', { choices: [['categorical', 'Category'], ['date', 'Date range'], ['numeric', 'Numeric range']] })
     }
     if (type === 'image') fields += `<label class="designer-config-field">Choose image<input id="config-image" type="file" accept="image/*"></label>`
-    content.innerHTML = `
+    content.innerHTML = chartTypes.has(type) ? chartSections : `
       <section class="designer-config-section"><h3>CONTENT</h3>${fields}</section>
       <section class="designer-config-section"><h3>SIZE</h3>${configField('Card width', 'size', component.size || 'medium', { choices: [['small', 'Small'], ['medium', 'Medium'], ['large', 'Full width']] })}</section>
       <section class="designer-config-section"><h3>COMPONENT</h3><div class="designer-config-actions">
@@ -343,16 +486,25 @@ function handleConfigChange(event) {
     renderComponents()
     return
   }
-  updateComponentConfig(key, target.type === 'number' ? Number(target.value) : target.value)
+  const value = target.type === 'checkbox'
+    ? target.checked
+    : target.type === 'number' ? Number(target.value) : target.value
+  updateComponentConfig(key, value)
 }
 
 function updateComponentConfig(key, value) {
   const component = state.dashboard.components.find((item) => item.id === state.selectedId)
   if (!component) return
   pushUndo()
-  if (key === 'title' || key === 'size') component[key] = value
+  if (key === 'type') {
+    if (component.title === labels[component.type]) component.title = labels[value]
+    component.type = value
+    if (!percentageChartTypes.has(value) && component.config.aggregation === 'percentage') {
+      component.config.aggregation = 'sum'
+    }
+  } else if (key === 'title' || key === 'size') component[key] = value
   else component.config[key] = value
-  if (key === 'dimension' || key === 'filterMode' || key === 'aggregation' || key === 'measure' || key === 'measure2' || key === 'size') {
+  if (key === 'dimension' || key === 'seriesField' || key === 'filterMode' || key === 'aggregation' || key === 'measure' || key === 'measure2' || key === 'sizeMeasure' || key === 'size' || key === 'type') {
     renderComponents()
     renderConfig()
   } else renderComponents()
@@ -430,15 +582,36 @@ function displayRows() {
   return snapshotRows()
 }
 
+function hasValue(value) {
+  return value !== null && value !== undefined && !(typeof value === 'string' && value.trim() === '')
+}
+
+function numericValue(value) {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : NaN
+  if (typeof value !== 'string' || value.trim() === '') return NaN
+  return Number(value)
+}
+
 function aggregate(values, method = 'sum') {
-  const numbers = values.map(Number).filter(Number.isFinite)
-  if (method === 'count') return values.filter((value) => value !== null && value !== '').length
-  if (method === 'unique') return new Set(values.filter((value) => value !== null && value !== '')).size
+  const present = values.filter(hasValue)
+  const numbers = present.map(numericValue).filter(Number.isFinite)
+  if (method === 'count') return present.length
+  if (method === 'unique') return new Set(values.filter(hasValue)).size
   if (!numbers.length) return 0
   if (method === 'average') return numbers.reduce((a, b) => a + b, 0) / numbers.length
   if (method === 'min') return Math.min(...numbers)
   if (method === 'max') return Math.max(...numbers)
   return numbers.reduce((a, b) => a + b, 0)
+}
+
+function percentOfTotal(values) {
+  const total = values.reduce((sum, value) => sum + value, 0)
+  return values.map((value) => total === 0 ? 0 : (value / total) * 100)
+}
+
+function percentageChangeFromFirst(values) {
+  const first = values.find(Number.isFinite) ?? 0
+  return values.map((value) => first === 0 ? 0 : ((value - first) / Math.abs(first)) * 100)
 }
 
 function groupedData(component, rows = displayRows()) {
@@ -449,11 +622,130 @@ function groupedData(component, rows = displayRows()) {
     if (!groups.has(label)) groups.set(label, [])
     groups.get(label).push(row[measure])
   })
-  const values = [...groups].map(([name, list]) => [
+  const rawValues = [...groups].map(([name, list]) => [
     name,
     aggregation === 'count' && !measure ? list.length : aggregate(list, aggregation),
   ])
-  return values.length > 30 ? values.slice(0, 30) : values
+  const rawNumbers = rawValues.map((item) => item[1])
+  const percentages = aggregation === 'percentage'
+    ? component.config.percentageMode === 'changeFromFirst'
+      ? percentageChangeFromFirst(rawNumbers)
+      : percentOfTotal(rawNumbers)
+    : percentOfTotal(rawNumbers)
+  return rawValues.slice(0, 30).map(([name, value], index) => [
+    name,
+    aggregation === 'percentage' ? percentages[index] : value,
+    percentages[index],
+  ])
+}
+
+function groupedSeriesData(component, rows = displayRows()) {
+  const { dimension, measure, aggregation = 'sum' } = component.config
+  const seriesField = component.config.seriesField
+  const categories = []
+  const valuesBySeries = new Map()
+  rows.forEach((row) => {
+    const category = String(row[dimension] ?? '(blank)')
+    const seriesName = seriesField ? String(row[seriesField] ?? '(blank)') : (measure || 'Value')
+    if (!categories.includes(category) && categories.length < 30) categories.push(category)
+    if (!categories.includes(category)) return
+    if (!valuesBySeries.has(seriesName) && valuesBySeries.size < 20) valuesBySeries.set(seriesName, new Map())
+    const series = valuesBySeries.get(seriesName)
+    if (!series) return
+    if (!series.has(category)) series.set(category, [])
+    series.get(category).push(measure ? row[measure] : 1)
+  })
+  const series = [...valuesBySeries].map(([name, values]) => ({
+    name,
+    values: categories.map((category) => aggregate(values.get(category) || [], aggregation)),
+  }))
+  const mode = component.config.percentageMode || (component.type === 'stackedBar' || component.type === 'percentStackedBar' ? 'category' : 'total')
+  const categoryTotals = categories.map((_, index) => series.reduce((sum, item) => sum + item.values[index], 0))
+  const total = categoryTotals.reduce((sum, value) => sum + value, 0)
+  series.forEach((item) => {
+    item.percentages = item.values.map((value, index) => {
+      const denominator = mode === 'category' || component.type === 'percentStackedBar' ? categoryTotals[index] : total
+      return denominator === 0 ? 0 : (value / denominator) * 100
+    })
+    if (component.type === 'percentStackedBar' || aggregation === 'percentage') {
+      item.values = [...item.percentages]
+    }
+  })
+  return { categories, series }
+}
+
+function numberText(value, precision, format = 'standard') {
+  const digits = Math.max(0, Math.min(2, Number.isInteger(precision) ? precision : 1))
+  const number = numericValue(value)
+  if (!Number.isFinite(number)) return '—'
+  return number.toLocaleString(undefined, {
+    maximumFractionDigits: digits,
+    minimumFractionDigits: digits,
+    ...(format === 'compact' ? { notation: 'compact' } : {}),
+  })
+}
+
+function legendOption(component, names = []) {
+  const config = component.config
+  const position = ['top', 'bottom', 'left', 'right'].includes(config.legendPosition) ? config.legendPosition : 'bottom'
+  const orientation = config.legendOrientation === 'vertical' ? 'vertical' : 'horizontal'
+  const positionAlign = ['left', 'center', 'right'].includes(config.legendAlign) ? config.legendAlign : 'center'
+  const align = positionAlign === 'center' ? 'auto' : positionAlign
+  return {
+    show: config.showLegend !== false,
+    data: [...new Set(names.filter(Boolean))],
+    orient: orientation,
+    align,
+    itemGap: Math.max(0, Math.min(40, Number(config.legendItemSpacing) || 0)),
+    textStyle: {
+      color: '#486B55',
+      fontSize: Math.max(8, Math.min(18, Number(config.legendTextSize) || 9)),
+    },
+    ...(position === 'top' ? { top: 4, left: positionAlign } : {}),
+    ...(position === 'bottom' ? { bottom: 2, left: positionAlign } : {}),
+    ...(position === 'left' ? { left: 4, top: 'middle' } : {}),
+    ...(position === 'right' ? { right: 4, top: 'middle' } : {}),
+  }
+}
+
+function chartTooltip(component, pie = false) {
+  const config = component.config
+  if (config.showTooltips === false) return { show: false }
+  return {
+    show: true,
+    trigger: pie || ['scatter', 'bubble'].includes(component.type) ? 'item' : 'axis',
+    backgroundColor: '#FFFFFF',
+    borderColor: '#CFE5D6',
+    borderWidth: 1,
+    padding: [9, 12],
+    textStyle: { color: '#174D35', fontSize: 11 },
+    extraCssText: 'box-shadow: 0 6px 20px rgba(23,77,53,.14); border-radius: 6px;',
+    axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(38,155,101,.08)' } },
+    formatter: (input) => {
+      const params = Array.isArray(input) ? input : [input]
+      return params.map((param) => {
+        const data = param.data && typeof param.data === 'object' ? param.data : {}
+        if (['scatter', 'bubble'].includes(component.type) && Array.isArray(param.value)) {
+          const [x, y, size] = param.value
+          const sizeLabel = component.type === 'bubble' ? `<br>${escapeHTML(config.sizeMeasure)}: ${numberText(size, config.decimalPrecision, config.numberFormat)}` : ''
+          return `${escapeHTML(param.seriesName || '')}<br>${escapeHTML(config.measure2)}: ${numberText(x, config.decimalPrecision, config.numberFormat)}<br>${escapeHTML(config.measure)}: ${numberText(y, config.decimalPrecision, config.numberFormat)}${sizeLabel}`
+        }
+        const rawValue = Number(data.value ?? param.value)
+        const value = Number.isFinite(rawValue) ? rawValue : 0
+        const isPercentageValue = config.aggregation === 'percentage' || component.type === 'percentStackedBar'
+        const metric = isPercentageValue
+          ? `${numberText(value, config.decimalPrecision)}%`
+          : numberText(value, config.decimalPrecision, config.numberFormat)
+        const percentage = Number.isFinite(Number(data.percentage)) ? Number(data.percentage) : Number(param.percent)
+        const share = Number.isFinite(percentage) ? `<br>${numberText(percentage, config.decimalPrecision)}%` : ''
+        const showShare = pie
+          ? config.showPercentageInTooltip !== false && !isPercentageValue
+          : config.showPercentageInTooltip === true && !isPercentageValue
+        const title = param.seriesName ? `${param.seriesName} · ` : ''
+        return `${escapeHTML(title)}${escapeHTML(param.name ?? '')}: ${metric}${showShare ? share : ''}`
+      }).join('<br>')
+    },
+  }
 }
 
 function chartOption(component) {
@@ -461,16 +753,128 @@ function chartOption(component) {
   const { type, config } = component
   const axis = {
     axisLine: { lineStyle: { color: '#B4D9C1' } },
-    axisLabel: { color: '#486B55', fontSize: 9, hideOverlap: true },
-    splitLine: { lineStyle: { color: '#EAF6EE' } },
+    axisLabel: { color: '#486B55', fontSize: 10, hideOverlap: true, margin: 10 },
+    nameTextStyle: { color: '#174D35', fontSize: 10, fontWeight: 600 },
+    splitLine: { show: component.config.showGridLines !== false, lineStyle: { color: '#EAF6EE', type: 'dashed' } },
   }
-  const base = { animationDuration: 450, color: palette, textStyle: { color: '#174D35', fontFamily: 'Inter, sans-serif' }, tooltip: { trigger: 'axis' }, grid: { top: 24, left: 44, right: 18, bottom: 42, containLabel: true } }
+  const legend = legendOption(component)
+  const legendVisible = component.config.showLegend !== false
+  const legendPosition = component.config.legendPosition || 'bottom'
+  const base = {
+    animationDuration: 450,
+    color: palette,
+    backgroundColor: config.chartBackground || 'transparent',
+    textStyle: { color: '#174D35', fontFamily: 'Inter, sans-serif', fontSize: 11 },
+    tooltip: chartTooltip(component),
+    ...(type === 'heatmap' ? {} : { legend }),
+    grid: {
+      top: legendVisible && legendPosition === 'top' ? 48 : 24,
+      left: legendVisible && legendPosition === 'left' ? 112 : 48,
+      right: legendVisible && legendPosition === 'right' ? 112 : 22,
+      bottom: legendVisible && legendPosition === 'bottom' ? 62 : 38,
+      containLabel: true,
+    },
+  }
   const groups = groupedData(component, rows)
   const names = groups.map((item) => item[0])
   const values = groups.map((item) => item[1])
+  const percentageMetric = config.aggregation === 'percentage' || type === 'percentStackedBar'
+  const labelFormatter = (params) => {
+    const data = params.data && typeof params.data === 'object' ? params.data : {}
+    if (percentageMetric) return `${numberText(params.value, config.decimalPrecision)}%`
+    if (config.showPercentage) return `${numberText(data.percentage ?? 0, config.decimalPrecision)}%`
+    return numberText(params.value, config.decimalPrecision, config.numberFormat)
+  }
+  const categoryPercentages = percentageMetric
+    ? values
+    : (type === 'line' || type === 'area') && config.percentageMode === 'changeFromFirst'
+      ? percentageChangeFromFirst(values)
+      : groups.map((item) => item[2])
+  const categoryData = values.map((value, index) => ({ value, percentage: categoryPercentages[index] }))
+  const visibleLegend = (namesArg) => ({ ...legend, data: [...new Set(namesArg.filter(Boolean))] })
+  const dimensionAxis = {
+    type: 'category',
+    name: config.dimension || '',
+    nameLocation: 'middle',
+    nameGap: 28,
+    data: names,
+    ...axis,
+  }
+  const metricAxis = {
+    ...axis,
+    type: 'value',
+    name: type === 'percentStackedBar'
+      ? `Percentage contribution${config.measure ? ` of ${config.measure}` : ''}`
+      : aggregationTitle(config),
+    nameLocation: 'middle',
+    nameGap: 42,
+    axisLabel: {
+      ...axis.axisLabel,
+      formatter: (value) => percentageMetric
+        ? `${numberText(value, config.decimalPrecision)}%`
+        : numberText(value, config.decimalPrecision, config.numberFormat),
+    },
+  }
+  if (type === 'stackedBar' || type === 'percentStackedBar') {
+    const grouped = groupedSeriesData(component, rows)
+    const seriesNames = grouped.series.map((item) => item.name)
+    const stackedSeries = grouped.series.map((item) => {
+      return {
+        name: item.name,
+        type: 'bar',
+        stack: 'total',
+        label: {
+          show: config.showDataLabels === true,
+          position: 'inside',
+          color: '#174D35',
+          formatter: (params) => {
+            const value = Number(params.value) || 0
+            const percentage = item.percentages[params.dataIndex] ?? 0
+            return percentageMetric || config.showPercentage
+              ? `${numberText(percentageMetric ? value : percentage, config.decimalPrecision)}%`
+              : numberText(value, config.decimalPrecision)
+          },
+        },
+        data: item.values.map((value, index) => ({ value, percentage: item.percentages[index] ?? 0 })),
+      }
+    })
+    return {
+      ...base,
+      legend: visibleLegend(seriesNames),
+      tooltip: chartTooltip(component),
+      xAxis: { type: 'category', name: config.dimension || '', nameLocation: 'middle', nameGap: 28, data: grouped.categories, ...axis },
+      yAxis: {
+        ...metricAxis,
+        max: type === 'percentStackedBar' ? 100 : undefined,
+        axisLabel: type === 'percentStackedBar'
+          ? { ...axis.axisLabel, formatter: (value) => `${numberText(value, config.decimalPrecision)}%` }
+          : metricAxis.axisLabel,
+      },
+      series: stackedSeries,
+    }
+  }
   if (['bar', 'horizontalBar', 'line', 'area', 'waterfall'].includes(type)) {
     const horizontal = type === 'horizontalBar'
-    const series = { type: type === 'line' || type === 'area' ? 'line' : 'bar', data: values, smooth: type === 'line' || type === 'area', itemStyle: { borderRadius: type.includes('Bar') || type === 'bar' ? 4 : 0 }, areaStyle: type === 'area' ? { opacity: .2 } : undefined }
+    const seriesName = aggregationTitle(config)
+    const series = {
+      name: seriesName,
+      type: type === 'line' || type === 'area' ? 'line' : 'bar',
+      data: categoryData,
+      smooth: type === 'line' || type === 'area',
+      barMaxWidth: 42,
+      barCategoryGap: '35%',
+      itemStyle: { borderRadius: type.includes('Bar') || type === 'bar' ? 4 : 0 },
+      lineStyle: { width: 2.5 },
+      symbol: 'circle',
+      symbolSize: type === 'line' || type === 'area' ? 6 : undefined,
+      areaStyle: type === 'area' ? { opacity: .2 } : undefined,
+      label: {
+        show: config.showDataLabels === true,
+        color: '#174D35',
+        position: horizontal ? 'right' : 'top',
+        formatter: labelFormatter,
+      },
+    }
     if (type === 'waterfall') {
       let total = 0
       const baseValues = []
@@ -485,45 +889,145 @@ function chartOption(component) {
       })
       return {
         ...base,
-        xAxis: horizontal ? { type: 'value', ...axis } : { type: 'category', data: names, ...axis },
-        yAxis: horizontal ? { type: 'category', data: names, ...axis } : { type: 'value', ...axis },
+        legend: visibleLegend(['Positive', 'Negative']),
+        xAxis: horizontal ? { ...metricAxis, type: 'value', name: aggregationTitle(config) } : dimensionAxis,
+        yAxis: horizontal ? { type: 'category', name: config.dimension || '', data: names, ...axis } : metricAxis,
         series: [
-          { type: 'bar', stack: 'total', data: baseValues, itemStyle: { color: 'transparent' }, emphasis: { itemStyle: { color: 'transparent' } } },
-          { type: 'bar', stack: 'total', data: positive, itemStyle: { color: '#269B65', borderRadius: 3 } },
-          { type: 'bar', stack: 'total', data: negative, itemStyle: { color: '#80D6A5', borderRadius: 3 } },
+          { name: 'Start', type: 'bar', stack: 'total', data: baseValues, itemStyle: { color: 'transparent' }, emphasis: { itemStyle: { color: 'transparent' } } },
+          { name: 'Positive', type: 'bar', stack: 'total', data: positive, itemStyle: { color: '#269B65', borderRadius: 3 }, label: { show: config.showDataLabels === true, position: 'top', formatter: (params) => numberText(params.value, config.decimalPrecision, config.numberFormat) } },
+          { name: 'Negative', type: 'bar', stack: 'total', data: negative, itemStyle: { color: '#80D6A5', borderRadius: 3 }, label: { show: config.showDataLabels === true, position: 'bottom', formatter: (params) => numberText(params.value, config.decimalPrecision, config.numberFormat) } },
         ],
       }
     }
-    return { ...base, xAxis: horizontal ? { type: 'value', ...axis } : { type: 'category', data: names, ...axis }, yAxis: horizontal ? { type: 'category', data: names, ...axis } : { type: 'value', ...axis }, series: [{ ...series, encode: undefined, ...(horizontal ? { data: values } : {}) }] }
+    const lineLabelPercentages = config.aggregation === 'percentage'
+      ? values
+      : config.percentageMode === 'changeFromFirst' && (type === 'line' || type === 'area')
+        ? percentageChangeFromFirst(values)
+        : percentOfTotal(values)
+    series.data = values.map((value, index) => ({ value, percentage: lineLabelPercentages[index] ?? 0 }))
+    series.label.formatter = (params) => {
+      const value = Number(params.value) || 0
+      const percentage = Number(params.data?.percentage) || 0
+      if (percentageMetric) return `${numberText(value, config.decimalPrecision)}%`
+      if (config.showPercentage) return `${numberText(percentage, config.decimalPrecision)}%`
+      return numberText(value, config.decimalPrecision)
+    }
+    return {
+      ...base,
+      legend: visibleLegend([seriesName]),
+      xAxis: horizontal ? { ...metricAxis, type: 'value', name: aggregationTitle(config) } : dimensionAxis,
+      yAxis: horizontal
+        ? { type: 'category', name: config.dimension || '', nameLocation: 'middle', nameGap: 34, data: names, ...axis }
+        : metricAxis,
+      series: [{ ...series, ...(horizontal ? { data: series.data } : {}) }],
+    }
   }
-  if (type === 'pie' || type === 'donut') return { ...base, tooltip: { trigger: 'item' }, legend: { bottom: 0, textStyle: { color: '#486B55', fontSize: 9 } }, series: [{ type: 'pie', radius: type === 'donut' ? ['42%', '70%'] : '68%', center: ['50%', '45%'], data: groups.map(([name, value]) => ({ name, value })), label: { color: '#174D35', fontSize: 9 }, itemStyle: { borderColor: '#fff', borderWidth: 2 } }] }
-  if (type === 'scatter' || type === 'bubble') return { ...base, xAxis: { type: 'value', name: config.measure2, ...axis }, yAxis: { type: 'value', name: config.measure, ...axis }, series: [{ type: 'scatter', data: rows.slice(0, 500).map((row) => [Number(row[config.measure2]), Number(row[config.measure]), type === 'bubble' ? Number(row[config.sizeMeasure || config.measure]) || 10 : 10]).filter((point) => point.every(Number.isFinite)), symbolSize: (value) => type === 'bubble' ? Math.max(5, Math.min(28, Math.sqrt(Math.abs(value[2])) * 2)) : 8 }] }
+  if (type === 'pie' || type === 'donut') {
+    return {
+      ...base,
+      legend: visibleLegend(names),
+      tooltip: chartTooltip(component, true),
+      series: [{
+        name: aggregationTitle(config),
+        type: 'pie',
+        radius: type === 'donut' ? ['40%', '67%'] : '64%',
+        center: legendVisible && ['left', 'right'].includes(legendPosition) ? ['50%', '50%'] : ['50%', legendVisible ? '44%' : '50%'],
+        data: groups.map(([name, value, percentage]) => ({ name, value, percentage })),
+        label: {
+          show: config.showDataLabels !== false,
+          color: '#174D35',
+          fontSize: 10,
+          minShowLabelAngle: 4,
+          labelLayout: { hideOverlap: true, moveOverlap: 'shiftY' },
+          formatter: (params) => {
+            const share = Number(params.data?.percentage ?? params.percent) || 0
+            if (config.showPercentage || config.aggregation === 'percentage') return `${params.name}: ${numberText(share, config.decimalPrecision)}%`
+            return `${params.name}: ${numberText(params.value, config.decimalPrecision, config.numberFormat)}`
+          },
+        },
+        itemStyle: { borderColor: '#fff', borderWidth: 2 },
+      }],
+    }
+  }
+  if (type === 'scatter' || type === 'bubble') {
+    const field = config.dimension
+    const categoryNames = [...new Set(rows.map((row) => String(row[field] ?? '(blank)')))].slice(0, 20)
+    const series = categoryNames.map((name) => ({
+      name,
+      type: 'scatter',
+      data: rows.filter((row) => String(row[field] ?? '(blank)') === name).slice(0, 500).map((row) => [
+        numericValue(row[config.measure2]),
+        numericValue(row[config.measure]),
+        type === 'bubble' ? numericValue(row[config.sizeMeasure]) : 10,
+      ]).filter((point) => point.slice(0, type === 'bubble' ? 3 : 2).every(Number.isFinite)),
+      symbolSize: (value) => type === 'bubble' ? Math.max(5, Math.min(28, Math.sqrt(Math.abs(value[2])) * 2)) : 8,
+    }))
+    return {
+      ...base,
+      legend: visibleLegend(categoryNames),
+      xAxis: { ...axis, type: 'value', name: config.measure2, nameLocation: 'middle', nameGap: 28 },
+      yAxis: { ...axis, type: 'value', name: config.measure, nameLocation: 'middle', nameGap: 42 },
+      series,
+    }
+  }
   if (type === 'histogram') {
-    const valuesNumeric = rows.map((row) => Number(row[config.measure])).filter(Number.isFinite)
-    if (!valuesNumeric.length) return { ...base, xAxis: { type: 'category', data: [] }, yAxis: { type: 'value' }, series: [{ type: 'bar', data: [] }] }
+    const valuesNumeric = rows.map((row) => numericValue(row[config.measure])).filter(Number.isFinite)
+    if (!valuesNumeric.length)     return { ...base, legend: visibleLegend(['Frequency']), xAxis: { type: 'category', name: config.measure, data: [] }, yAxis: { type: 'value', name: 'Count' }, series: [{ name: 'Frequency', type: 'bar', data: [] }] }
     const min = Math.min(...valuesNumeric)
     const max = Math.max(...valuesNumeric)
     const count = Math.max(2, Math.min(30, Number(config.bins) || 8))
     const width = (max - min) / count || 1
     const bins = Array.from({ length: count }, (_, index) => ({ name: `${(min + index * width).toPrecision(3)}–${(min + (index + 1) * width).toPrecision(3)}`, value: 0 }))
     valuesNumeric.forEach((value) => { bins[Math.min(count - 1, Math.floor((value - min) / width))].value += 1 })
-    return { ...base, xAxis: { type: 'category', data: bins.map((bin) => bin.name), ...axis }, yAxis: { type: 'value', ...axis }, series: [{ type: 'bar', data: bins.map((bin) => bin.value), itemStyle: { borderRadius: [4, 4, 0, 0] } }] }
+    return {
+      ...base,
+      legend: visibleLegend(['Frequency']),
+      xAxis: { type: 'category', name: config.measure, nameLocation: 'middle', nameGap: 28, data: bins.map((bin) => bin.name), ...axis },
+      yAxis: { ...axis, type: 'value', name: 'Count', nameLocation: 'middle', nameGap: 35 },
+      series: [{
+        name: 'Frequency',
+        type: 'bar',
+        data: bins.map((bin) => bin.value),
+        barMaxWidth: 42,
+        label: { show: config.showDataLabels === true, formatter: (params) => numberText(params.value, config.decimalPrecision, config.numberFormat) },
+        itemStyle: { borderRadius: [4, 4, 0, 0] },
+      }],
+    }
   }
-  if (type === 'radar') return { ...base, radar: { indicator: groups.map(([name]) => ({ name, max: Math.max(1, ...values.map(Math.abs)) })), axisName: { color: '#206B48', fontSize: 9 }, splitArea: { areaStyle: { color: ['#FFFFFF', '#F4FBF6'] } } }, series: [{ type: 'radar', data: [{ value: values, name: component.title }], areaStyle: { opacity: .18 } }] }
-  if (type === 'treemap' || type === 'funnel') return { ...base, tooltip: { trigger: 'item' }, series: [{ type, data: groups.map(([name, value]) => ({ name, value })), label: { color: '#174D35', fontSize: 9 }, itemStyle: { borderColor: '#fff', borderWidth: 2 } }] }
+  if (type === 'radar') return { ...base, legend: visibleLegend([component.title]), radar: { indicator: groups.map(([name]) => ({ name, max: Math.max(1, ...values.map(Math.abs)) })), axisName: { color: '#206B48', fontSize: 9 }, splitArea: { areaStyle: { color: ['#FFFFFF', '#F4FBF6'] } } }, series: [{ name: component.title, type: 'radar', data: [{ value: values, name: component.title }], label: { show: config.showDataLabels === true, formatter: (params) => numberText(params.value, config.decimalPrecision) }, areaStyle: { opacity: .18 } }] }
+  if (type === 'treemap' || type === 'funnel') return { ...base, legend: visibleLegend(names), tooltip: chartTooltip(component, true), series: [{ name: aggregationTitle(config), type, data: groups.map(([name, value]) => ({ name, value })), label: { show: config.showDataLabels !== false, color: '#174D35', fontSize: 10, formatter: (params) => numberText(params.value, config.decimalPrecision, config.numberFormat) }, itemStyle: { borderColor: '#fff', borderWidth: 2 } }] }
   if (type === 'heatmap') {
-    const xField = config.measure2 || config.dimension
+    const xField = config.measure2
     const xNames = [...new Set(rows.map((row) => String(row[config.dimension] ?? '(blank)')))].slice(0, 18)
     const yNames = [...new Set(rows.map((row) => String(row[xField] ?? '(blank)')))].slice(0, 18)
     const valuesHeat = []
     rows.forEach((row) => {
       const x = xNames.indexOf(String(row[config.dimension] ?? '(blank)'))
       const y = yNames.indexOf(String(row[xField] ?? '(blank)'))
-      if (x >= 0 && y >= 0) valuesHeat.push([x, y, Number(row[config.measure]) || 0])
+      const value = numericValue(row[config.measure])
+      if (x >= 0 && y >= 0 && Number.isFinite(value)) valuesHeat.push([x, y, value])
     })
-    return { ...base, tooltip: { position: 'top' }, grid: { top: 15, left: 70, right: 15, bottom: 45 }, xAxis: { type: 'category', data: xNames, splitArea: { show: true }, ...axis }, yAxis: { type: 'category', data: yNames, splitArea: { show: true }, ...axis }, visualMap: { min: Math.min(0, ...valuesHeat.map((item) => item[2])), max: Math.max(1, ...valuesHeat.map((item) => item[2])), calculable: true, orient: 'horizontal', left: 'center', bottom: 2, inRange: { color: ['#DDF4E6', '#80D6A5', '#269B65', '#174D35'] } }, series: [{ type: 'heatmap', data: valuesHeat, label: { show: valuesHeat.length < 60, color: '#174D35', fontSize: 8 } }] }
+    return {
+      ...base,
+      tooltip: config.showTooltips === false ? { show: false } : {
+        trigger: 'item',
+        position: 'top',
+        backgroundColor: '#FFFFFF',
+        borderColor: '#CFE5D6',
+        textStyle: { color: '#174D35', fontSize: 11 },
+        formatter: (params) => {
+          const [x, y, value] = params.value
+          return `${escapeHTML(config.dimension)}: ${escapeHTML(xNames[x])}<br>${escapeHTML(xField)}: ${escapeHTML(yNames[y])}<br>${escapeHTML(aggregationTitle(config))}: ${numberText(value, config.decimalPrecision, config.numberFormat)}`
+        },
+      },
+      grid: { top: 42, left: 80, right: 20, bottom: 52 },
+      xAxis: { type: 'category', name: config.dimension, nameLocation: 'middle', nameGap: 28, data: xNames, splitArea: { show: true }, ...axis },
+      yAxis: { type: 'category', name: xField, nameLocation: 'middle', nameGap: 48, data: yNames, splitArea: { show: true }, ...axis },
+      visualMap: { min: Math.min(0, ...valuesHeat.map((item) => item[2])), max: Math.max(1, ...valuesHeat.map((item) => item[2])), calculable: true, orient: 'horizontal', left: 'center', bottom: 2, inRange: { color: ['#DDF4E6', '#80D6A5', '#269B65', '#174D35'] } },
+      series: [{ name: aggregationTitle(config), type: 'heatmap', data: valuesHeat, label: { show: config.showDataLabels === true && valuesHeat.length < 60, color: '#174D35', fontSize: 9 } }],
+    }
   }
-  return { ...base, xAxis: { type: 'category', data: names, ...axis }, yAxis: { type: 'value', ...axis }, series: [{ type: 'bar', data: values }] }
+  return { ...base, xAxis: { type: 'category', data: names, ...axis }, yAxis: { type: 'value', ...axis }, series: [{ name: config.measure || 'Value', type: 'bar', data: categoryData, label: { show: config.showDataLabels === true, formatter: labelFormatter } }] }
 }
 
 function componentCard(component) {
@@ -689,6 +1193,12 @@ function renderComponents(recreateCharts = true) {
       canvas.append(card)
       if (chartTypes.has(component.type) && state.rows.length && state.columns.length) {
         const chartNode = card.querySelector('.dashboard-chart')
+        const issues = chartFieldIssues(component)
+        if (issues.length) {
+          chartNode.classList.add('dashboard-chart-warning')
+          chartNode.textContent = `Needs configuration: ${issues.join(' ')}`
+          return
+        }
         if (!globalThis.echarts?.init) {
           chartNode.textContent = 'Charts could not load. Restart the application and try again.'
           chartNode.classList.add('dashboard-empty')
@@ -705,7 +1215,8 @@ function renderComponents(recreateCharts = true) {
         }
       } else if (chartTypes.has(component.type)) {
         const chartNode = card.querySelector('.dashboard-chart')
-        chartNode.innerHTML = '<div class="dashboard-empty"><p>Select a dataset to render real data.</p></div>'
+        chartNode.classList.add('dashboard-chart-warning')
+        chartNode.textContent = 'Select an imported or processed dataset to render this chart.'
       }
     })
   }
@@ -817,6 +1328,7 @@ async function downloadPNG() {
       pixelRatio: 2,
       cacheBust: true,
       backgroundColor: '#FFFFFF',
+      skipFonts: true,
       width: canvas.scrollWidth,
       height: canvas.scrollHeight,
       style: { transform: 'none', margin: '0' },
@@ -870,6 +1382,11 @@ async function historyAction(direction) {
 export function initDashboardDesigner() {
   document.getElementById('designer-dataset').addEventListener('change', async (event) => {
     try { await selectDataset(event.target.value) } catch (error) { showToast(error.message || 'Could not load this dataset.', 'error') }
+  })
+  document.getElementById('designer-dataset-source').addEventListener('change', async () => {
+    const currentId = state.dashboard.dataset_id || ''
+    const keepSelection = currentId && state.datasets.some((item) => (item.file_id || item.dataset_id || item.id) === currentId)
+    await loadDatasets(keepSelection ? currentId : '').catch((error) => showToast(error.message || 'Could not refresh the dataset list.', 'error'))
   })
   document.getElementById('designer-name').addEventListener('input', (event) => {
     state.dashboard.name = event.target.value
