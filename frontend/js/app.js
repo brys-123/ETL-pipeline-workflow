@@ -2,6 +2,7 @@ import { loadDashboard, refreshDashboard } from './dashboard.js'
 import { initFiles, loadFiles } from './files.js'
 import { initWorkflow, loadWorkflows, newWorkflow } from './workflow.js'
 import { initOperations } from './operations.js'
+import { initDashboardDesigner } from './dashboard-designer.js'
 
 export async function api(path, options = {}) {
   const headers = new Headers(options.headers || {})
@@ -107,10 +108,26 @@ function initializeShell() {
   })
 }
 
+function loadVendorScript(source) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement('script')
+    script.src = source
+    script.onload = resolve
+    script.onerror = () => reject(new Error(`Could not load visualization library: ${source}`))
+    document.head.append(script)
+  })
+}
+
 initializeShell()
 initFiles()
 initWorkflow()
 initOperations()
+Promise.all([loadVendorScript('/vendor/echarts.js'), loadVendorScript('/vendor/html-to-image.js')])
+  .then(() => initDashboardDesigner())
+  .catch((error) => {
+    showToast(error.message || 'Dashboard visualization libraries could not be loaded.', 'error')
+    initDashboardDesigner()
+  })
 loadDashboard()
 switchPage('dashboard')
 loadFiles()

@@ -144,7 +144,7 @@ class DatasetService:
         offset = (page - 1) * page_size
         rows = [
             [
-                (str(value) if record.get("file_type") == "csv" and not pd.isna(value) else _json_value(value))
+                _json_value(value)
                 for value in row
             ]
             for row in frame.iloc[offset:offset + page_size].itertuples(index=False, name=None)

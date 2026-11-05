@@ -191,6 +191,7 @@ def list_executions():
     metadata = MetadataService(current_app.extensions["etl_storage"])
     executions = metadata.list_executions()
     status = request.args.get("status")
+    workflow_id = request.args.get("workflow_id")
     query = request.args.get("q", "").strip().casefold()
     if status and status not in {"running", "completed", "failed"}:
         return jsonify({"error": "Choose running, completed, or failed as the status filter."}), 400
@@ -198,6 +199,8 @@ def list_executions():
         return jsonify({"error": "Search text must be 120 characters or fewer."}), 400
     if status:
         executions = [item for item in executions if item.get("status") == status]
+    if workflow_id:
+        executions = [item for item in executions if item.get("workflow_id") == workflow_id]
     if query:
         executions = [
             item for item in executions
@@ -219,6 +222,109 @@ def get_execution(execution_id: str):
     return jsonify(execution)
 
 
+def _execution_node_preview(storage, execution: dict, node_id: str, page_size: int = 100):
+    status = execution.get("node_statuses", {}).get(node_id)
+    if status is None:
+        return jsonify({"error": "Node not found in this execution."}), 404
+    node = {
+        "id": node_id,
+        "name": status.get("node_name", node_id),
+        "type": status.get("node_type"),
+    }
+    common = {
+        "node": node,
+        "execution_id": execution["execution_id"],
+        "execution_status": execution.get("status"),
+        "execution_timestamp": execution.get("completed_at") or execution.get("started_at"),
+        "status": status.get("status"),
+        "error": status.get("error"),
+        "total_rows": status.get("rows", 0),
+        "total_columns": status.get("columns", 0),
+        "column_metadata": status.get("column_metadata", []),
+        "executed_at": status.get("executed_at"),
+        "rows": [],
+        "columns": [],
+        "page": 1,
+        "page_size": page_size,
+        "total_pages": 1,
+        "has_more": False,
+    }
+    if status.get("status") in {"failed", "skipped"}:
+        return jsonify(common)
+    if status.get("status") in {"pending", "running"}:
+        return jsonify(common), 409
+
+    preview = execution.get("previews", {}).get(node_id)
+    if preview is None or not status.get("output_available"):
+        return jsonify({**common, "no_output": True})
+
+    try:
+        page = request.args.get("page", default=1, type=int)
+        requested_page_size = request.args.get("page_size", default=page_size, type=int)
+        query = request.args.get("q", default="", type=str)
+        if len(query) > 200:
+            return jsonify({"error": "Search text must be 200 characters or fewer."}), 400
+        dataset = {
+            "file_id": execution["execution_id"],
+            "execution_id": execution["execution_id"],
+            "node_id": node_id,
+            "filename": preview.get("dataset_name", node["name"]),
+            "file_type": "json",
+            "status": "preview",
+        }
+        data = DatasetService(storage).preview(dataset, page, requested_page_size, query)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except FileNotFoundError:
+        return jsonify({"error": "The stored node output could not be found."}), 404
+    except (OSError, RuntimeError, UnicodeDecodeError, ValueError) as exc:
+        current_app.logger.exception("Node output could not be read: %s", exc)
+        return jsonify({"error": "The node output could not be read."}), 500
+    return jsonify({
+        **common,
+        **data,
+        "status": "success",
+        "node": node,
+        "execution_id": execution["execution_id"],
+        "execution_status": execution.get("status"),
+        "execution_timestamp": execution.get("completed_at") or execution.get("started_at"),
+        "executed_at": preview.get("executed_at"),
+        "total_rows": data["total_rows"],
+        "total_columns": preview.get("column_count", len(data["columns"])),
+        "column_metadata": preview.get("columns", []),
+        "preview": preview,
+    })
+
+
+@workflows_blueprint.get("/workflows/<workflow_id>/nodes/<node_id>/preview")
+def get_latest_workflow_node_preview(workflow_id: str, node_id: str):
+    storage = current_app.extensions["etl_storage"]
+    metadata = MetadataService(storage)
+    try:
+        workflow = metadata.get_workflow(workflow_id)
+        executions = metadata.list_executions()
+    except (RuntimeError, ValueError) as exc:
+        current_app.logger.exception("Workflow node preview metadata could not be read: %s", exc)
+        return jsonify({"error": "Workflow node preview could not be read."}), 500
+    if workflow is None:
+        return jsonify({"error": "Workflow not found."}), 404
+
+    execution_id = request.args.get("execution_id")
+    if execution_id:
+        execution = next((
+            item for item in executions
+            if item.get("execution_id") == execution_id and item.get("workflow_id") == workflow_id
+        ), None)
+    else:
+        execution = next((
+            item for item in sorted(executions, key=lambda item: item.get("started_at", ""), reverse=True)
+            if item.get("workflow_id") == workflow_id
+        ), None)
+    if execution is None:
+        return jsonify({"error": "Run the workflow to view this node's output."}), 404
+    return _execution_node_preview(storage, execution, node_id, page_size=50)
+
+
 @workflows_blueprint.get("/executions/<execution_id>/previews/<node_id>")
 def get_execution_preview(execution_id: str, node_id: str):
     storage = current_app.extensions["etl_storage"]
@@ -230,35 +336,7 @@ def get_execution_preview(execution_id: str, node_id: str):
         return jsonify({"error": "Execution preview could not be read."}), 500
     if execution is None:
         return jsonify({"error": "Execution not found."}), 404
-    preview = execution.get("previews", {}).get(node_id)
-    if preview is None:
-        status = execution.get("node_statuses", {}).get(node_id, {}).get("status")
-        if status in {"pending", "running"}:
-            return jsonify({"error": "This preview node has not completed yet."}), 409
-        return jsonify({"error": "No preview data is available for this node in this execution."}), 404
-    try:
-        page = request.args.get("page", default=1, type=int)
-        page_size = request.args.get("page_size", default=100, type=int)
-        query = request.args.get("q", default="", type=str)
-        if len(query) > 200:
-            return jsonify({"error": "Search text must be 200 characters or fewer."}), 400
-        dataset = {
-            "file_id": execution_id,
-            "execution_id": execution_id,
-            "node_id": node_id,
-            "filename": preview["dataset_name"],
-            "file_type": "json",
-            "status": "preview",
-        }
-        data = DatasetService(storage).preview(dataset, page, page_size, query)
-    except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    except FileNotFoundError:
-        return jsonify({"error": "The stored execution preview could not be found."}), 404
-    except (OSError, RuntimeError, UnicodeDecodeError, ValueError) as exc:
-        current_app.logger.exception("Execution preview could not be read: %s", exc)
-        return jsonify({"error": "The execution preview could not be read."}), 500
-    return jsonify({"preview": preview, **data})
+    return _execution_node_preview(storage, execution, node_id, page_size=100)
 
 
 @workflows_blueprint.delete("/workflows/<workflow_id>")

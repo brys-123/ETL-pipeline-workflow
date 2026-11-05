@@ -64,6 +64,36 @@ class MetadataService:
         path.unlink()
         return True
 
+    def list_dashboards(self) -> list[dict[str, Any]]:
+        dashboards: list[dict[str, Any]] = []
+        for path in self.storage.dashboards_dir.glob("*.json"):
+            try:
+                dashboard = self.storage.read_json(path, None)
+                if (
+                    isinstance(dashboard, dict)
+                    and dashboard.get("dashboard_id") == path.stem
+                    and self.storage.file_id_is_valid(path.stem)
+                ):
+                    dashboards.append(dashboard)
+            except RuntimeError:
+                continue
+        return sorted(dashboards, key=lambda item: item.get("updated_at", ""), reverse=True)
+
+    def get_dashboard(self, dashboard_id: str) -> dict[str, Any] | None:
+        path = self.storage.dashboard_path(dashboard_id)
+        dashboard = self.storage.read_json(path, None)
+        return dashboard if isinstance(dashboard, dict) and dashboard.get("dashboard_id") == dashboard_id else None
+
+    def save_dashboard(self, dashboard: dict[str, Any]) -> None:
+        self.storage.write_json(self.storage.dashboard_path(dashboard["dashboard_id"]), dashboard)
+
+    def delete_dashboard(self, dashboard_id: str) -> bool:
+        path = self.storage.dashboard_path(dashboard_id)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
     def list_executions(self) -> list[dict[str, Any]]:
         executions = self.storage.read_json(self.executions_index, [])
         if not isinstance(executions, list):

@@ -230,7 +230,12 @@ class WorkflowExecutionService:
             "operations": [],
             "previews": {},
             "node_statuses": {
-                node["id"]: {"status": "pending", "node_name": node.get("name", node["id"])}
+                node["id"]: {
+                    "status": "pending",
+                    "node_name": node.get("name", node["id"]),
+                    "node_type": node.get("type"),
+                    "output_available": False,
+                }
                 for node in workflow.get("nodes", [])
             },
             "summary": {},
@@ -379,39 +384,58 @@ class WorkflowExecutionService:
                             rows = len(frame)
                         elif node_type in PREVIEW_TYPES:
                             frame = inputs[0]
-                            self.datasets.write_preview(frame, execution_id, node_id)
-                            inspection = {
-                                "row_count": int(len(frame)),
-                                "column_count": int(len(frame.columns)),
-                                "columns": [
-                                    {"name": str(column), "dtype": str(frame[column].dtype), "missing": int(frame[column].isna().sum())}
-                                    for column in frame.columns
-                                ],
-                                "missing_cells": int(frame.isna().sum().sum()),
-                            }
-                            source_names = [
-                                source["filename"]
-                                for ancestor in input_ancestors(node_id)
-                                if (source := self.metadata.get_file(ancestor.get("config", {}).get("file_id")))
-                            ]
-                            record["previews"][node_id] = {
-                                **inspection,
-                                "dataset_name": ", ".join(sorted(set(source_names))) or node.get("name", "Workflow preview"),
-                                "execution_id": execution_id,
-                            }
                             frame_by_node[node_id] = frame
                             rows = len(frame)
                         else:
                             frame_by_node[node_id] = _transform(node, inputs)
                             rows = len(frame_by_node[node_id])
 
+                    frame = frame_by_node[node_id]
+                    completed_at = utc_now()
+                    column_metadata = [
+                        {
+                            "name": str(column),
+                            "dtype": str(frame[column].dtype),
+                            "missing": int(frame[column].isna().sum()),
+                        }
+                        for column in frame.columns
+                    ]
+                    source_names = [
+                        source["filename"]
+                        for ancestor in input_ancestors(node_id)
+                        if (source := self.metadata.get_file(ancestor.get("config", {}).get("file_id")))
+                    ]
+                    if node_type in PREVIEW_TYPES:
+                        self.datasets.write_preview(frame, execution_id, node_id)
+                        output_metadata = {
+                            "node_id": node_id,
+                            "node_name": node.get("name", node_id),
+                            "node_type": node_type,
+                            "status": "success",
+                            "row_count": int(len(frame)),
+                            "column_count": int(len(frame.columns)),
+                            "columns": column_metadata,
+                            "missing_cells": int(frame.isna().sum().sum()),
+                            "dataset_name": ", ".join(sorted(set(source_names))) or node.get("name", "Workflow output"),
+                            "execution_id": execution_id,
+                            "executed_at": completed_at,
+                            "output_ref": {"kind": "node_preview", "node_id": node_id},
+                        }
+                        record["previews"][node_id] = output_metadata
                     record["operations"].append({
                         "node_id": node_id,
                         "node_name": node.get("name", node_id),
                         "type": node_type,
                         "rows": rows,
                     })
-                    record["node_statuses"][node_id].update({"status": "success", "rows": rows})
+                    record["node_statuses"][node_id].update({
+                        "status": "success",
+                        "rows": rows,
+                        "columns": int(len(frame.columns)),
+                        "column_metadata": column_metadata,
+                        "output_available": True,
+                        "executed_at": completed_at,
+                    })
                     self.metadata.save_execution(record)
                 except Exception as exc:
                     failure = exc if isinstance(exc, WorkflowExecutionError) else WorkflowExecutionError(

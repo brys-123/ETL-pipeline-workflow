@@ -15,6 +15,7 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.1/font/bootstrap-icons.min.css" rel="stylesheet" />
     <link href="/css/style.css" rel="stylesheet" />
     <link href="/css/workflow.css" rel="stylesheet" />
+    <link href="/css/dashboard-designer.css" rel="stylesheet" />
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -31,6 +32,7 @@
         <nav class="sidebar-nav" aria-label="Main navigation">
           <button class="nav-link active" data-page="dashboard"><i class="bi bi-grid-1x2"></i><span>Dashboard</span></button>
           <button class="nav-link" data-page="workflow"><i class="bi bi-bezier2"></i><span>Workflow Builder</span></button>
+          <button class="nav-link" data-page="dashboard-designer"><i class="bi bi-bar-chart-line"></i><span>Dashboard Designer</span></button>
           <button class="nav-link" data-page="files"><i class="bi bi-folder2-open"></i><span>My Files</span><span class="nav-counter" id="nav-file-count">0</span></button>
           <button class="nav-link" data-page="cleaning"><i class="bi bi-bandaid"></i><span>Data Cleaning</span></button>
           <button class="nav-link" data-page="processed"><i class="bi bi-file-earmark-check"></i><span>Processed Data</span></button>
@@ -83,6 +85,80 @@
               <div class="panel-title-row"><div><h2>Saved workflows</h2><p>Workflow structures saved in your local storage</p></div><button class="button-secondary button-sm" data-page="workflow"><i class="bi bi-plus-lg"></i> New workflow</button></div>
               <div class="table-responsive"><table class="studio-table"><thead><tr><th>Workflow</th><th>Nodes</th><th>Last updated</th><th></th></tr></thead><tbody id="recent-workflows-body"><tr><td class="table-empty" colspan="4">No workflows saved. Create a workflow to get started.</td></tr></tbody></table></div>
             </section>
+          </section>
+
+          <section class="page-view" id="page-dashboard-designer" aria-labelledby="designer-page-title" hidden>
+            <header class="designer-header">
+              <div class="designer-heading"><p class="section-overline">DATA VISUALIZATION</p><h1 id="designer-page-title">Dashboard Designer</h1><p>Create a shareable dashboard from your actual datasets.</p></div>
+              <div class="designer-toolbar">
+                <label class="designer-name"><span>DASHBOARD NAME</span><input id="designer-name" maxlength="120" value="Untitled dashboard" /></label>
+                <label class="designer-dataset"><span>DATASET</span><select id="designer-dataset"><option value="">Select a dataset</option></select></label>
+                <button class="toolbar-button" id="designer-upload" type="button" title="Upload dataset"><i class="bi bi-cloud-arrow-up"></i><span>Upload</span></button>
+                <button class="toolbar-button" id="designer-new" type="button"><i class="bi bi-plus-lg"></i><span>New</span></button>
+                <button class="toolbar-button" id="designer-undo" type="button" title="Undo" aria-label="Undo"><i class="bi bi-arrow-counterclockwise"></i></button>
+                <button class="toolbar-button" id="designer-redo" type="button" title="Redo" aria-label="Redo"><i class="bi bi-arrow-clockwise"></i></button>
+                <select id="designer-template" aria-label="Start from template"><option value="">Blank dashboard</option><option value="sales">Sales analytics</option><option value="finance">Financial performance</option><option value="inventory">Inventory</option><option value="general">General analytics</option></select>
+                <select id="designer-saved" aria-label="Saved dashboards"><option value="">Saved dashboards</option></select>
+                <button class="button-secondary button-sm" id="designer-open" type="button"><i class="bi bi-folder2-open"></i> Open</button>
+                <button class="toolbar-button" id="designer-duplicate" type="button" title="Duplicate dashboard"><i class="bi bi-copy"></i><span>Duplicate</span></button>
+                <button class="toolbar-button" id="designer-delete" type="button" title="Delete dashboard"><i class="bi bi-trash3"></i></button>
+                <button class="button-secondary button-sm" id="designer-preview-toggle" type="button"><i class="bi bi-easel"></i> Preview Dashboard</button>
+                <button class="button-primary button-sm" id="designer-save" type="button"><i class="bi bi-floppy"></i> Save Dashboard</button>
+                <button class="button-primary button-sm" id="designer-download" type="button"><i class="bi bi-download"></i> Download PNG</button>
+              </div>
+            </header>
+            <input id="designer-file-input" type="file" accept=".csv,.xlsx,.json" hidden />
+            <div class="designer-layout">
+              <aside class="designer-library surface-panel" aria-label="Dashboard components">
+                <div class="designer-panel-heading"><span class="section-overline">COMPONENTS</span><h2>Visualization library</h2><p>Add a component to your dashboard.</p></div>
+                <label class="designer-search"><i class="bi bi-search"></i><input id="designer-component-search" type="search" placeholder="Search components" aria-label="Search dashboard components" /></label>
+                <section class="designer-component-group"><h3>CHARTS</h3><div class="designer-component-list">
+                  <button data-add-component="bar"><i class="bi bi-bar-chart"></i><span>Bar Chart<small>Compare categories</small></span></button>
+                  <button data-add-component="horizontalBar"><i class="bi bi-bar-chart-steps"></i><span>Horizontal Bar<small>Rank categories</small></span></button>
+                  <button data-add-component="line"><i class="bi bi-graph-up"></i><span>Line Chart<small>Show change over time</small></span></button>
+                  <button data-add-component="area"><i class="bi bi-graph-up-arrow"></i><span>Area Chart<small>Show cumulative trends</small></span></button>
+                  <button data-add-component="pie"><i class="bi bi-pie-chart"></i><span>Pie Chart<small>Compare proportions</small></span></button>
+                  <button data-add-component="donut"><i class="bi bi-circle-half"></i><span>Donut Chart<small>Show composition</small></span></button>
+                  <button data-add-component="scatter"><i class="bi bi-scatter-chart"></i><span>Scatter Plot<small>Compare two measures</small></span></button>
+                  <button data-add-component="bubble"><i class="bi bi-record-circle"></i><span>Bubble Chart<small>Add a third measure</small></span></button>
+                  <button data-add-component="histogram"><i class="bi bi-bar-chart-line"></i><span>Histogram<small>Show a distribution</small></span></button>
+                  <button data-add-component="radar"><i class="bi bi-bullseye"></i><span>Radar Chart<small>Compare profiles</small></span></button>
+                  <button data-add-component="treemap"><i class="bi bi-grid"></i><span>Treemap<small>Compare nested totals</small></span></button>
+                  <button data-add-component="funnel"><i class="bi bi-filter"></i><span>Funnel Chart<small>Show category drop-off</small></span></button>
+                  <button data-add-component="waterfall"><i class="bi bi-water"></i><span>Waterfall<small>Show running changes</small></span></button>
+                  <button data-add-component="heatmap"><i class="bi bi-grid-3x3"></i><span>Heatmap<small>Compare two dimensions</small></span></button>
+                </div></section>
+                <section class="designer-component-group"><h3>DASHBOARD COMPONENTS</h3><div class="designer-component-list">
+                  <button data-add-component="kpi"><i class="bi bi-speedometer2"></i><span>KPI Card<small>Highlight a metric</small></span></button>
+                  <button data-add-component="table"><i class="bi bi-table"></i><span>Data Table<small>Show dataset rows</small></span></button>
+                  <button data-add-component="text"><i class="bi bi-type"></i><span>Text / Heading<small>Add context</small></span></button>
+                  <button data-add-component="image"><i class="bi bi-image"></i><span>Image<small>Add a local image</small></span></button>
+                  <button data-add-component="divider"><i class="bi bi-hr"></i><span>Divider<small>Separate sections</small></button>
+                  <button data-add-component="filter"><i class="bi bi-funnel"></i><span>Filter Control<small>Filter dashboard data</small></button>
+                  <button data-add-component="section"><i class="bi bi-layout-three-columns"></i><span>New Section<small>Add a dashboard row</small></button>
+                </div></section>
+                <section class="designer-component-group"><h3>START WITH A TEMPLATE</h3><div class="designer-template-list">
+                  <button data-use-template="sales">Sales Analytics<small>Revenue, orders, categories</small></button>
+                  <button data-use-template="finance">Financial Performance<small>Income, costs, trends</small></button>
+                  <button data-use-template="inventory">Inventory<small>Stock and category mix</small></button>
+                  <button data-use-template="general">General Analytics<small>Metrics and comparisons</small></button>
+                </div></section>
+              </aside>
+              <section class="designer-canvas-column" aria-label="Dashboard canvas">
+                <div class="designer-canvas-toolbar"><span id="designer-status">Unsaved dashboard</span><span id="designer-dataset-info">Choose a dataset to begin</span></div>
+                <div class="designer-canvas-scroll">
+                  <div class="dashboard-canvas" id="dashboard-canvas">
+                    <header class="dashboard-report-header"><div><p id="dashboard-report-eyebrow">DATA INSIGHTS</p><h2 id="dashboard-report-title">Untitled dashboard</h2><p id="dashboard-report-subtitle">Select a dataset and add visualizations to get started.</p></div><span id="dashboard-report-date"></span></header>
+                    <div class="dashboard-filter-bar" id="dashboard-filter-bar"></div>
+                    <div class="dashboard-components" id="dashboard-components"></div>
+                  </div>
+                </div>
+              </section>
+              <aside class="designer-config surface-panel">
+                <div class="designer-panel-heading"><span class="section-overline">CONFIGURATION</span><h2 id="designer-config-title">Dashboard settings</h2><p id="designer-config-subtitle">Select a component or customize the canvas.</p></div>
+                <div id="designer-config-content" class="designer-config-content"></div>
+              </aside>
+            </div>
           </section>
 
           <section class="page-view" id="page-workflow" aria-labelledby="workflow-page-title" hidden>

@@ -15,10 +15,19 @@ class FileSystemStorage:
         self.uploads_dir = self.root / "uploads"
         self.processed_dir = self.root / "processed"
         self.workflows_dir = self.root / "workflows"
+        self.dashboards_dir = self.root / "dashboards"
         self.logs_dir = self.root / "logs"
         self.metadata_dir = self.root / "metadata"
         self.previews_dir = self.metadata_dir / "previews"
-        for directory in (self.uploads_dir, self.processed_dir, self.workflows_dir, self.logs_dir, self.metadata_dir, self.previews_dir):
+        for directory in (
+            self.uploads_dir,
+            self.processed_dir,
+            self.workflows_dir,
+            self.dashboards_dir,
+            self.logs_dir,
+            self.metadata_dir,
+            self.previews_dir,
+        ):
             directory.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
@@ -80,6 +89,14 @@ class FileSystemStorage:
         path = (self.workflows_dir / f"{workflow_id}.json").resolve()
         if path.parent != self.workflows_dir.resolve():
             raise ValueError("Invalid workflow location.")
+        return path
+
+    def dashboard_path(self, dashboard_id: str) -> Path:
+        if not self.file_id_is_valid(dashboard_id):
+            raise ValueError("Invalid dashboard identifier.")
+        path = (self.dashboards_dir / f"{dashboard_id}.json").resolve()
+        if path.parent != self.dashboards_dir.resolve():
+            raise ValueError("Invalid dashboard location.")
         return path
 
     def write_upload(self, file_id: str, extension: str, content: bytes) -> None:

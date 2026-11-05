@@ -161,6 +161,14 @@ def preview_file(file_id: str):
         if len(query) > 200:
             return jsonify({"error": "Search text must be 200 characters or fewer."}), 400
         preview = DatasetService(storage).preview(record, page, page_size, query)
+        if record.get("file_type") == "csv":
+            preview["rows"] = [
+                [
+                    None if value is None or value != value else str(value)
+                    for value in row
+                ]
+                for row in preview["rows"]
+            ]
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except FileNotFoundError:

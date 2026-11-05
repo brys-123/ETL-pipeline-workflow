@@ -46,6 +46,14 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
     def frontend_js(filename: str):
         return send_from_directory(frontend_root / "js", filename)
 
+    @app.get("/vendor/echarts.js")
+    def echarts_vendor():
+        return send_from_directory(frontend_root / "node_modules" / "echarts" / "dist", "echarts.min.js")
+
+    @app.get("/vendor/html-to-image.js")
+    def html_to_image_vendor():
+        return send_from_directory(frontend_root / "node_modules" / "html-to-image" / "dist", "html-to-image.js")
+
     @app.errorhandler(413)
     def too_large(_error):
         return jsonify({"error": "Upload exceeds the configured size limit."}), 413

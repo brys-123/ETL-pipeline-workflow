@@ -5,9 +5,10 @@ Simple ETL Studio is a local, file-backed workspace for inspecting, cleaning, tr
 ## Requirements
 
 - Python 3.11 or newer
+- Node.js and npm (for the Dashboard Designer's local visualization libraries)
 - Windows PowerShell for the commands below
 
-The Flask server serves both the API and the frontend. Node.js is not required to run the application.
+The Flask server serves both the API and the frontend. Install the frontend packages once so Flask can serve the local charting and PNG-export libraries.
 
 ## Install and run
 
@@ -18,6 +19,9 @@ py -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -r backend\requirements.txt
+Set-Location frontend
+npm ci
+Set-Location ..
 Copy-Item .env.example .env
 python backend\app.py
 ```
@@ -56,6 +60,7 @@ The configured storage root contains:
 - `uploads/`: original uploaded files
 - `processed/`: derived datasets from cleaning operations and workflow exports
 - `workflows/`: one JSON file per saved workflow
+- `dashboards/`: one JSON file per saved dashboard design
 - `logs/`: rotating application log
 - `metadata/`: JSON file and execution indexes
 
@@ -70,6 +75,7 @@ Do not place `.env`, uploaded datasets, generated metadata, or logs under source
 - Validate and run workflows, including filters, column selection and renaming, aggregation, two-input joins, and CSV/XLSX/JSON exports. Runs report per-node status; failed nodes skip their dependents while independent branches can finish.
 - Add a Preview Data node to inspect the actual intermediate rows at that pipeline step, including searchable and paginated output.
 - Review run status, failures, metrics, and downloadable outputs in Execution History and Processed Data.
+- Design data-backed dashboards with 14 chart types, KPI cards, tables, text, images, sections, and interactive filters. Save dashboard JSON designs, reopen or duplicate them, preview layouts, and export the complete dashboard as a high-resolution PNG.
 - Dashboard counts and recent activity are derived from locally stored metadata.
 
 ## API
