@@ -74,3 +74,39 @@
   .app-shell { display: block; }.sidebar { position: relative; inset: auto; width: 100%; height: auto; padding: 10px 12px 0; }.sidebar .brand-lockup { padding: 0 4px 9px; }.workspace-switcher { display: none; }.nav-caption { display: none; }.sidebar > .side-nav { display: flex; overflow-x: auto; gap: 3px; padding-bottom: 8px; }.nav-item { width: auto; min-width: max-content; min-height: 34px; padding: 0 9px; }.nav-disabled { display: none; }.sidebar-bottom { display: none; }.main-area { width: 100%; margin-left: 0; }.topbar { height: 48px; padding: 0 15px; }.content-page { padding: 26px 16px 35px; }.page-heading { align-items: start; }.page-heading h1 { font-size: 26px; }.page-heading > .primary-button { flex: 0 0 auto; padding: 0 9px; font-size: 10px; }.summary-grid { grid-template-columns: 1fr; gap: 8px; }.summary-card { min-height: 90px; position: relative; padding: 12px; }.summary-card .summary-icon { position: absolute; right: 12px; top: 12px; }.summary-card p { margin: 0 0 4px; }.summary-card strong { font-size: 24px; }.summary-card small { margin-top: 3px; }.section-heading { margin-top: 25px; }.workflow-table th:nth-child(3), .workflow-table td:nth-child(3) { display: none; }.workflow-table th, .workflow-table td { padding-right: 9px; padding-left: 9px; }.table-workflow-name strong { max-width: 145px; }.next-step-band { align-items: start; flex-wrap: wrap; }.next-step-band > div { min-width: calc(100% - 52px); }.next-step-band .secondary-button { margin-left: 48px; }
   .builder-toolbar { align-items: start; flex-direction: column; padding: 9px 12px; }.builder-title { width: 100%; }.builder-title input { max-width: none; flex: 1; }.builder-actions { justify-content: flex-end; width: 100%; }.builder-workspace { grid-template-columns: 1fr; }.node-library { border-right: 0; border-bottom: 1px solid var(--line); }.node-library .panel-heading { padding-bottom: 9px; }.node-library .panel-heading > p:last-child { display: none; }.node-category { display: none; }.node-library { display: flex; flex-wrap: wrap; gap: 4px; padding: 9px 10px; }.node-library .panel-heading { width: 100%; }.node-library .panel-heading h2 { margin-bottom: 0; }.node-option { width: auto; flex: 1 1 calc(50% - 4px); margin: 0; padding: 5px; }.node-option small { display: none; }.library-footnote { width: 100%; margin: 3px 2px 0; padding-top: 7px; }.flow-canvas { min-height: 450px; }.config-panel { grid-column: auto; display: block; padding: 12px; border-top: 1px solid var(--line); }.config-panel .panel-heading { padding-bottom: 8px; }.config-fields { display: block; }.config-fields label { margin: 10px 0; }.canvas-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 0 15px; }.canvas-stats .config-help { grid-column: 1 / -1; }
 }
+
+.auth-intro, .sidebar { background: var(--green-gradient); }
+.auth-panel, .topbar, .summary-card, .workflow-table-wrap, .empty-table,
+.builder-toolbar, .node-library, .config-panel {
+  background: var(--white-gradient);
+}
+.primary-button { background: linear-gradient(135deg, #1d583d, #347b50); }
+.primary-button:hover:not(:disabled) { background: linear-gradient(135deg, #174a33, #286b44); }
+.summary-icon.green, .summary-icon.coral { color: #34744b; background: linear-gradient(135deg, #e6f3e8, #cfe8d3); }
+.user-card .user-avatar { color: #174a33; background: linear-gradient(135deg, #e8f4eb, #bfe3c5); }
+.environment-pill span { background: #62a875; }
+.orbit-transform, .orbit-load { color: #d6efda; }
+.form-error, .remove-node { color: #34744b; }
+.status-draft, .status-completed, .status-failed {
+  color: #286541;
+  background: linear-gradient(135deg, #e8f4eb, #d5ebd9);
+}
+.draft-tag { color: #286541; background: linear-gradient(135deg, #edf7ee, #d8eddc); }
+.app-shell { background: var(--white-gradient); }
+.auth-screen { background: var(--white-gradient); }
+.summary-card { border-color: #deebe2; }
+.flow-canvas {
+  background-color: #f3f9f4;
+  background-image:
+    linear-gradient(rgba(35, 103, 71, .035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(35, 103, 71, .035) 1px, transparent 1px),
+    linear-gradient(145deg, #f8fcf9, #eaf5ed);
+}
+.flow-canvas .react-flow__node.selected {
+  border-color: #4f9866;
+  box-shadow: 0 0 0 2px rgba(79, 152, 102, .16), 0 4px 12px rgba(34, 58, 43, .07);
+}
+.flow-canvas .react-flow__handle { background: #4f9866; }
+.flow-canvas .react-flow__edge-path { stroke: #4f9866; }
+.flow-canvas .react-flow__controls-button,
+.flow-canvas .react-flow__minimap { background: linear-gradient(145deg, #ffffff, #edf6ef); }

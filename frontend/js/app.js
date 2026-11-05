@@ -1,6 +1,7 @@
 import { loadDashboard, refreshDashboard } from './dashboard.js'
 import { initFiles, loadFiles } from './files.js'
 import { initWorkflow, loadWorkflows, newWorkflow } from './workflow.js'
+import { initOperations } from './operations.js'
 
 export async function api(path, options = {}) {
   const headers = new Headers(options.headers || {})
@@ -10,7 +11,9 @@ export async function api(path, options = {}) {
   const response = await fetch(path, { ...options, headers })
   const payload = await response.json().catch(() => null)
   if (!response.ok) {
-    throw new Error(payload?.error || `Request failed (${response.status})`)
+    const error = new Error(payload?.error || `Request failed (${response.status})`)
+    error.payload = payload
+    throw error
   }
   return payload
 }
@@ -107,6 +110,7 @@ function initializeShell() {
 initializeShell()
 initFiles()
 initWorkflow()
+initOperations()
 loadDashboard()
 switchPage('dashboard')
 loadFiles()

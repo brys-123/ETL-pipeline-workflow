@@ -1,30 +1,30 @@
 :root {
   font-family: "Aptos", "Segoe UI", sans-serif;
-  color: #1d2b27;
-  background: #f4f6f2;
+  color: #18392f;
+  background: #f5faf6;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-optical-sizing: auto;
   font-weight: 400;
-  --ink: #1d2b27;
-  --muted: #78827d;
-  --line: #e3e8e3;
+  --ink: #18392f;
+  --muted: #71877a;
+  --line: #deebe2;
   --paper: #ffffff;
-  --canvas: #f4f6f2;
-  --forest: #20483d;
-  --forest-dark: #18392f;
-  --mint: #e8f1eb;
-  --lime: #c9e69a;
-  --amber: #d78a3b;
-  --coral: #c76550;
+  --canvas: #f5faf6;
+  --forest: #236747;
+  --forest-dark: #123d2e;
+  --mint: #e8f4eb;
+  --lime: #c9efc6;
+  --green-gradient: linear-gradient(135deg, #123d2e 0%, #236747 58%, #43875c 100%);
+  --white-gradient: linear-gradient(145deg, #ffffff 0%, #f7fbf8 58%, #edf6ef 100%);
 }
 
 * { box-sizing: border-box; }
-body { margin: 0; min-width: 320px; min-height: 100vh; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: var(--white-gradient); }
 button, input, textarea { font: inherit; }
 button { color: inherit; }
-button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #6c9c7d; outline-offset: 2px; }
-::selection { color: #17382e; background: #d5e8ce; }
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #4f9866; outline-offset: 2px; }
+::selection { color: #123d2e; background: #ccebd0; }
 #root { min-height: 100vh; }

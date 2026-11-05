@@ -2,6 +2,7 @@ import json
 import os
 import re
 import uuid
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,8 @@ class FileSystemStorage:
         self.workflows_dir = self.root / "workflows"
         self.logs_dir = self.root / "logs"
         self.metadata_dir = self.root / "metadata"
-        for directory in (self.uploads_dir, self.processed_dir, self.workflows_dir, self.logs_dir, self.metadata_dir):
+        self.previews_dir = self.metadata_dir / "previews"
+        for directory in (self.uploads_dir, self.processed_dir, self.workflows_dir, self.logs_dir, self.metadata_dir, self.previews_dir):
             directory.mkdir(parents=True, exist_ok=True)
 
     @staticmethod
@@ -55,6 +57,23 @@ class FileSystemStorage:
             raise ValueError("Invalid stored file location.")
         return path
 
+    def processed_path(self, file_id: str, extension: str) -> Path:
+        if not self.file_id_is_valid(file_id) or extension not in {".csv", ".xlsx", ".json"}:
+            raise ValueError("Invalid processed file identifier.")
+        path = (self.processed_dir / f"{file_id}{extension}").resolve()
+        if path.parent != self.processed_dir.resolve():
+            raise ValueError("Invalid processed file location.")
+        return path
+
+    def preview_path(self, execution_id: str, node_id: str) -> Path:
+        if not self.file_id_is_valid(execution_id) or not isinstance(node_id, str) or not node_id:
+            raise ValueError("Invalid execution preview identifier.")
+        node_key = sha256(node_id.encode("utf-8")).hexdigest()
+        path = (self.previews_dir / f"{execution_id}_{node_key}.json").resolve()
+        if path.parent != self.previews_dir.resolve():
+            raise ValueError("Invalid execution preview location.")
+        return path
+
     def workflow_path(self, workflow_id: str) -> Path:
         if not self.file_id_is_valid(workflow_id):
             raise ValueError("Invalid workflow identifier.")
@@ -68,6 +87,13 @@ class FileSystemStorage:
 
     def delete_upload(self, file_id: str, extension: str) -> bool:
         path = self.upload_path(file_id, extension)
+        if not path.exists():
+            return False
+        path.unlink()
+        return True
+
+    def delete_processed(self, file_id: str, extension: str) -> bool:
+        path = self.processed_path(file_id, extension)
         if not path.exists():
             return False
         path.unlink()

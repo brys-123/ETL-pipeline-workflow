@@ -1,6 +1,6 @@
 # Simple ETL Studio
 
-Simple ETL Studio Phase 1 is a local, file-backed workspace for uploading datasets and designing visual ETL workflows. The application uses Flask, JSON metadata, and the local filesystem. It does not use a database.
+Simple ETL Studio is a local, file-backed workspace for inspecting, cleaning, transforming, and exporting datasets through visual ETL workflows. The application uses Flask, JSON metadata, and the local filesystem; it does not use a database.
 
 ## Requirements
 
@@ -25,6 +25,8 @@ python backend\app.py
 Open http://127.0.0.1:5000. The API health check is at http://127.0.0.1:5000/api/health.
 
 To stop the development server, press `Ctrl+C` in its PowerShell terminal.
+
+For Vite development, keep the Flask server running and start Vite in a second terminal with `npm run dev` from `frontend`. Vite proxies `/api` requests to `http://127.0.0.1:5000`; set `VITE_API_PROXY_TARGET` if Flask is running at another URL.
 
 ## Configuration
 
@@ -52,20 +54,23 @@ python backend\app.py
 The configured storage root contains:
 
 - `uploads/`: original uploaded files
-- `processed/`: reserved for later processing phases
+- `processed/`: derived datasets from cleaning operations and workflow exports
 - `workflows/`: one JSON file per saved workflow
 - `logs/`: rotating application log
 - `metadata/`: JSON file and execution indexes
 
 Do not place `.env`, uploaded datasets, generated metadata, or logs under source control. The root `.gitignore` excludes these paths.
 
-## Phase 1 features
+## Features
 
-- Dashboard counts and recent activity derived from stored file and workflow metadata.
-- CSV, XLSX, and JSON upload with size and content checks, safe generated filenames, file listing, filtering, and deletion.
-- Visual workflow canvas with draggable nodes, configurable saved fields, directional connections, node removal, zoom, pan, fit, and a minimap.
-- Workflows are validated and saved/reopened as JSON.
-- Processed data and execution history show explicit empty states; workflow execution and transformations are not simulated in this phase.
+- Upload CSV, XLSX, and JSON datasets, individually or in batches, with size and content validation.
+- Inspect schema, column types, missing values, duplicates, and numeric statistics; search and paginate dataset previews.
+- Apply cleaning operations to derived copies, including missing-value handling, duplicate removal, text normalization, type conversion, column changes, and IQR outlier handling. Source uploads remain unchanged.
+- Build workflows with connected input, transformation, merge, preview, and export nodes. Branching is supported, while merge nodes require two connected inputs.
+- Validate and run workflows, including filters, column selection and renaming, aggregation, two-input joins, and CSV/XLSX/JSON exports. Runs report per-node status; failed nodes skip their dependents while independent branches can finish.
+- Add a Preview Data node to inspect the actual intermediate rows at that pipeline step, including searchable and paginated output.
+- Review run status, failures, metrics, and downloadable outputs in Execution History and Processed Data.
+- Dashboard counts and recent activity are derived from locally stored metadata.
 
 ## API
 
@@ -73,20 +78,31 @@ Do not place `.env`, uploaded datasets, generated metadata, or logs under source
 | --- | --- | --- |
 | `GET` | `/api/health` | Application and storage status |
 | `GET` | `/api/dashboard/stats` | Real counts and recent file/workflow activity |
-| `GET` | `/api/files` | List uploaded file metadata; optional `?status=uploaded` |
+| `GET` | `/api/files` | List file metadata; optional `?status=uploaded` or `?status=processed` |
 | `POST` | `/api/files/upload` | Multipart upload using the `file` field |
-| `DELETE` | `/api/files/<file_id>` | Delete one stored upload and its metadata |
+| `GET` | `/api/files/<file_id>/preview` | Search and page through dataset rows (`page`, `page_size`, `q`) |
+| `GET` | `/api/files/<file_id>/schema` | Inspect dataset columns and inferred types |
+| `GET` | `/api/files/<file_id>/summary` | Dataset quality and numeric statistics |
+| `POST` | `/api/files/<file_id>/clean` | Apply a cleaning operation to a derived copy |
+| `GET` | `/api/files/<file_id>/download` | Download an uploaded or processed dataset |
+| `DELETE` | `/api/files/<file_id>` | Delete a stored dataset and its metadata |
 | `GET` | `/api/workflows` | List saved workflow JSON |
 | `POST` | `/api/workflows` | Create or update a workflow structure |
 | `GET` | `/api/workflows/<workflow_id>` | Retrieve a saved workflow |
+| `POST` | `/api/workflows/<workflow_id>/validate` | Validate a saved workflow and get execution order |
+| `POST` | `/api/workflows/<workflow_id>/run` | Start a background workflow run (`202` with an execution ID) |
+| `POST` | `/api/workflows/<workflow_id>/execute` | Execute a saved workflow synchronously for API compatibility |
 | `DELETE` | `/api/workflows/<workflow_id>` | Delete a saved workflow |
+| `GET` | `/api/executions` | List workflow runs; optional `status` and `q` filters |
+| `GET` | `/api/executions/<execution_id>` | Retrieve one workflow run and its details |
+| `GET` | `/api/executions/<execution_id>/previews/<node_id>` | Search and page through a Preview Data node's intermediate rows |
 
 ## Tests
 
 Run the backend tests from the project root:
 
 ```powershell
-python -m pytest -q
+.\.venv\Scripts\python.exe -m pytest -q
 ```
 
 Tests use temporary storage directories and do not touch the application's local data.
@@ -111,8 +127,8 @@ storage/
   uploads/ processed/ workflows/ logs/ metadata/
 ```
 
-The earlier FastAPI/React prototype remains in `backend/app/` and `frontend/src/` for reference. Phase 1 runs through `backend/app.py` and the static HTML/CSS/JavaScript served by Flask. The pre-existing `etlstudio.db` file is legacy data; this Phase 1 application does not open or modify it.
+The earlier FastAPI/React prototype remains in `backend/app/` and `frontend/src/` for reference. The active application runs through `backend/app.py` and serves the HTML/CSS/JavaScript in `frontend/`. The pre-existing `etlstudio.db` file is legacy data; the active application does not open or modify it.
 
-## Not included in Phase 1
+## Not included
 
-Workflow execution, actual transformation and export operations, authentication, collaboration, scheduling, and AI features are not implemented. Node settings are saved as design metadata only.
+Authentication, collaboration, scheduling, and AI features are not implemented.

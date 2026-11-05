@@ -2,7 +2,9 @@ import math
 from flask import Blueprint, current_app, jsonify, request
 
 from ..services.metadata_service import MetadataService
+from ..services.dataset_service import DatasetService
 from ..utils.helpers import utc_now
+from ..services.workflow_execution_service import WorkflowExecutionError, WorkflowExecutionService
 
 workflows_blueprint = Blueprint("workflows", __name__)
 
@@ -118,6 +120,145 @@ def get_workflow(workflow_id: str):
     if workflow is None:
         return jsonify({"error": "Workflow not found."}), 404
     return jsonify(workflow)
+
+
+@workflows_blueprint.post("/workflows/<workflow_id>/validate")
+def validate_saved_workflow(workflow_id: str):
+    metadata = MetadataService(current_app.extensions["etl_storage"])
+    try:
+        workflow = metadata.get_workflow(workflow_id)
+    except ValueError:
+        workflow = None
+    if workflow is None:
+        return jsonify({"error": "Workflow not found."}), 404
+    result = WorkflowExecutionService(current_app.extensions["etl_storage"]).validate(workflow)
+    return jsonify(result), (200 if result["valid"] else 400)
+
+
+@workflows_blueprint.post("/workflows/<workflow_id>/run")
+def start_workflow_execution(workflow_id: str):
+    metadata = MetadataService(current_app.extensions["etl_storage"])
+    try:
+        workflow = metadata.get_workflow(workflow_id)
+    except ValueError:
+        workflow = None
+    if workflow is None:
+        return jsonify({"error": "Workflow not found."}), 404
+    try:
+        result = WorkflowExecutionService(current_app.extensions["etl_storage"]).start(workflow)
+    except WorkflowExecutionError as exc:
+        return jsonify({
+            "error": str(exc),
+            "failing_node_id": exc.node_id,
+            "errors": str(exc).removeprefix("Workflow validation failed: ").split(". "),
+        }), (409 if "currently executing" in str(exc) else 422)
+    except (OSError, RuntimeError, ValueError) as exc:
+        current_app.logger.exception("Workflow execution could not be started for %s: %s", workflow_id, exc)
+        return jsonify({"error": "Workflow execution could not be started."}), 500
+    return jsonify(result), 202
+
+
+@workflows_blueprint.post("/workflows/<workflow_id>/execute")
+def execute_saved_workflow(workflow_id: str):
+    metadata = MetadataService(current_app.extensions["etl_storage"])
+    try:
+        workflow = metadata.get_workflow(workflow_id)
+    except ValueError:
+        workflow = None
+    if workflow is None:
+        return jsonify({"error": "Workflow not found."}), 404
+    try:
+        result = WorkflowExecutionService(current_app.extensions["etl_storage"]).execute(workflow)
+    except WorkflowExecutionError as exc:
+        current_app.logger.info("Workflow %s execution rejected/failed: %s", workflow_id, exc)
+        failed = next(
+            (item for item in reversed(metadata.list_executions()) if item.get("workflow_id") == workflow_id and item.get("status") == "failed"),
+            None,
+        )
+        return jsonify({
+            "error": str(exc),
+            "execution": failed,
+            "failing_node_id": exc.node_id or (failed or {}).get("failing_node_id"),
+        }), (409 if "currently executing" in str(exc) else 422)
+    except (OSError, RuntimeError, ValueError) as exc:
+        current_app.logger.exception("Workflow execution failed for %s: %s", workflow_id, exc)
+        return jsonify({"error": "The workflow could not be executed."}), 500
+    return jsonify(result)
+
+
+@workflows_blueprint.get("/executions")
+def list_executions():
+    metadata = MetadataService(current_app.extensions["etl_storage"])
+    executions = metadata.list_executions()
+    status = request.args.get("status")
+    query = request.args.get("q", "").strip().casefold()
+    if status and status not in {"running", "completed", "failed"}:
+        return jsonify({"error": "Choose running, completed, or failed as the status filter."}), 400
+    if len(query) > 120:
+        return jsonify({"error": "Search text must be 120 characters or fewer."}), 400
+    if status:
+        executions = [item for item in executions if item.get("status") == status]
+    if query:
+        executions = [
+            item for item in executions
+            if query in str(item.get("workflow_name", "")).casefold()
+            or query in str(item.get("execution_id", "")).casefold()
+        ]
+    return jsonify(sorted(executions, key=lambda item: item.get("started_at", ""), reverse=True))
+
+
+@workflows_blueprint.get("/executions/<execution_id>")
+def get_execution(execution_id: str):
+    try:
+        execution = MetadataService(current_app.extensions["etl_storage"]).get_execution(execution_id)
+    except RuntimeError as exc:
+        current_app.logger.exception("Execution history could not be read: %s", exc)
+        return jsonify({"error": "Execution history could not be read."}), 500
+    if execution is None:
+        return jsonify({"error": "Execution not found."}), 404
+    return jsonify(execution)
+
+
+@workflows_blueprint.get("/executions/<execution_id>/previews/<node_id>")
+def get_execution_preview(execution_id: str, node_id: str):
+    storage = current_app.extensions["etl_storage"]
+    metadata = MetadataService(storage)
+    try:
+        execution = metadata.get_execution(execution_id)
+    except RuntimeError as exc:
+        current_app.logger.exception("Execution preview metadata could not be read: %s", exc)
+        return jsonify({"error": "Execution preview could not be read."}), 500
+    if execution is None:
+        return jsonify({"error": "Execution not found."}), 404
+    preview = execution.get("previews", {}).get(node_id)
+    if preview is None:
+        status = execution.get("node_statuses", {}).get(node_id, {}).get("status")
+        if status in {"pending", "running"}:
+            return jsonify({"error": "This preview node has not completed yet."}), 409
+        return jsonify({"error": "No preview data is available for this node in this execution."}), 404
+    try:
+        page = request.args.get("page", default=1, type=int)
+        page_size = request.args.get("page_size", default=100, type=int)
+        query = request.args.get("q", default="", type=str)
+        if len(query) > 200:
+            return jsonify({"error": "Search text must be 200 characters or fewer."}), 400
+        dataset = {
+            "file_id": execution_id,
+            "execution_id": execution_id,
+            "node_id": node_id,
+            "filename": preview["dataset_name"],
+            "file_type": "json",
+            "status": "preview",
+        }
+        data = DatasetService(storage).preview(dataset, page, page_size, query)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except FileNotFoundError:
+        return jsonify({"error": "The stored execution preview could not be found."}), 404
+    except (OSError, RuntimeError, UnicodeDecodeError, ValueError) as exc:
+        current_app.logger.exception("Execution preview could not be read: %s", exc)
+        return jsonify({"error": "The execution preview could not be read."}), 500
+    return jsonify({"preview": preview, **data})
 
 
 @workflows_blueprint.delete("/workflows/<workflow_id>")

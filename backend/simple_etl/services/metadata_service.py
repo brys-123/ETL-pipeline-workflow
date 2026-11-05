@@ -25,6 +25,12 @@ class MetadataService:
         records.append(record)
         self.storage.write_json(self.files_index, records)
 
+    def delete_files(self, file_ids: set[str]) -> None:
+        self.storage.write_json(
+            self.files_index,
+            [record for record in self.list_files() if record.get("file_id") not in file_ids],
+        )
+
     def delete_file(self, file_id: str) -> None:
         self.storage.write_json(
             self.files_index,
@@ -63,3 +69,12 @@ class MetadataService:
         if not isinstance(executions, list):
             raise RuntimeError("Execution metadata is invalid.")
         return executions
+
+    def get_execution(self, execution_id: str) -> dict[str, Any] | None:
+        return next((item for item in self.list_executions() if item.get("execution_id") == execution_id), None)
+
+    def save_execution(self, record: dict[str, Any]) -> None:
+        executions = self.list_executions()
+        executions = [item for item in executions if item.get("execution_id") != record.get("execution_id")]
+        executions.append(record)
+        self.storage.write_json(self.executions_index, executions)

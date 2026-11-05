@@ -1,13 +1,103 @@
-from pathlib import Path
+import csv
+import io
+import json
+import zipfile
+from math import isfinite
 from uuid import uuid4
 
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, current_app, jsonify, request, send_file
+from openpyxl import load_workbook
+from openpyxl.utils.exceptions import InvalidFileException
 
 from ..services.metadata_service import MetadataService
+from ..services.dataset_service import DatasetService
+from ..services.cleaning_service import CleaningError, apply_cleaning, quality_stats
 from ..utils.file_validator import validate_dataset
 from ..utils.helpers import utc_now
 
 files_blueprint = Blueprint("files", __name__)
+PREVIEW_ROW_LIMIT = 100
+
+
+def _display_value(value):
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, ensure_ascii=False, default=str)
+    if isinstance(value, float) and not isfinite(value):
+        return str(value)
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
+
+
+def _column_names(values):
+    return [
+        str(value).strip() if value is not None and str(value).strip() else f"Column {index + 1}"
+        for index, value in enumerate(values)
+    ]
+
+
+def _preview_json(content):
+    value = json.loads(content.decode("utf-8-sig"))
+    records = value if isinstance(value, list) else [value]
+    if not records:
+        return [], [], False
+
+    if all(isinstance(record, dict) for record in records):
+        columns = list(dict.fromkeys(str(key) for record in records for key in record))
+        rows = [[_display_value(record.get(column, "")) for column in columns] for record in records[:PREVIEW_ROW_LIMIT + 1]]
+    elif all(isinstance(record, list) for record in records):
+        width = max((len(record) for record in records), default=0)
+        columns = _column_names([None] * width)
+        rows = [[_display_value(cell) for cell in record] for record in records[:PREVIEW_ROW_LIMIT + 1]]
+    else:
+        columns = ["Value"]
+        rows = [[_display_value(record)] for record in records[:PREVIEW_ROW_LIMIT + 1]]
+
+    has_more = len(rows) > PREVIEW_ROW_LIMIT
+    return columns, rows[:PREVIEW_ROW_LIMIT], has_more
+
+
+def _preview_csv(content):
+    text = content.decode("utf-8-sig")
+    sample = text[:8192]
+    try:
+        dialect = csv.Sniffer().sniff(sample)
+    except csv.Error:
+        dialect = csv.excel
+
+    reader = csv.reader(io.StringIO(text, newline=""), dialect)
+    headers = next(reader, [])
+    columns = _column_names(headers)
+    rows = []
+    for row in reader:
+        rows.append([_display_value(cell) for cell in row])
+        if len(rows) > PREVIEW_ROW_LIMIT:
+            break
+    has_more = len(rows) > PREVIEW_ROW_LIMIT
+    return columns, rows[:PREVIEW_ROW_LIMIT], has_more
+
+
+def _preview_excel(content):
+    workbook = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    try:
+        worksheet = workbook.active
+        if worksheet is None:
+            return [], [], False
+        values = worksheet.iter_rows(values_only=True)
+        columns = _column_names(next(values, []))
+        rows = []
+        for row in values:
+            rows.append([_display_value(cell) for cell in row])
+            if len(rows) > PREVIEW_ROW_LIMIT:
+                break
+        has_more = len(rows) > PREVIEW_ROW_LIMIT
+        return columns, rows[:PREVIEW_ROW_LIMIT], has_more
+    finally:
+        workbook.close()
 
 
 @files_blueprint.get("/files")
@@ -57,6 +147,125 @@ def upload_file():
     return jsonify(record), 201
 
 
+@files_blueprint.get("/files/<file_id>/preview")
+def preview_file(file_id: str):
+    storage = current_app.extensions["etl_storage"]
+    record = MetadataService(storage).get_file(file_id)
+    if record is None:
+        return jsonify({"error": "File not found."}), 404
+
+    try:
+        page = request.args.get("page", default=1, type=int)
+        page_size = request.args.get("page_size", default=100, type=int)
+        query = request.args.get("q", default="", type=str)
+        if len(query) > 200:
+            return jsonify({"error": "Search text must be 200 characters or fewer."}), 400
+        preview = DatasetService(storage).preview(record, page, page_size, query)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except FileNotFoundError:
+        return jsonify({"error": "The stored dataset could not be found."}), 404
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, csv.Error, zipfile.BadZipFile, InvalidFileException) as exc:
+        current_app.logger.exception("Dataset preview failed for %s: %s", file_id, exc)
+        return jsonify({"error": "The dataset could not be previewed."}), 500
+
+    return jsonify(preview)
+
+
+def _dataset_inspection(file_id: str):
+    storage = current_app.extensions["etl_storage"]
+    record = MetadataService(storage).get_file(file_id)
+    if record is None:
+        return jsonify({"error": "File not found."}), 404
+    try:
+        return jsonify(DatasetService(storage).inspect(record))
+    except FileNotFoundError:
+        return jsonify({"error": "The stored dataset could not be found."}), 404
+    except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        current_app.logger.exception("Dataset inspection failed for %s: %s", file_id, exc)
+        return jsonify({"error": "The dataset could not be inspected."}), 422
+
+
+@files_blueprint.get("/files/<file_id>/schema")
+def dataset_schema(file_id: str):
+    response = _dataset_inspection(file_id)
+    if not isinstance(response, tuple):
+        return jsonify({"schema": response.json.get("schema", [])})
+    return response
+
+
+@files_blueprint.get("/files/<file_id>/summary")
+@files_blueprint.get("/files/<file_id>/statistics")
+def dataset_summary(file_id: str):
+    return _dataset_inspection(file_id)
+
+
+@files_blueprint.post("/files/<file_id>/clean")
+def clean_file(file_id: str):
+    storage = current_app.extensions["etl_storage"]
+    metadata = MetadataService(storage)
+    record = metadata.get_file(file_id)
+    if record is None:
+        return jsonify({"error": "File not found."}), 404
+    processed_id = None
+    extension = f".{record['file_type']}"
+    try:
+        frame = DatasetService(storage).read(record)
+        operation = request.get_json(silent=True)
+        result, summary = apply_cleaning(frame, operation)
+        if operation.get("operation") == "inspect_outliers":
+            return jsonify({"inspection": summary, "quality": quality_stats(frame)})
+        processed_id = storage.new_id()
+        DatasetService(storage).write_processed(result, extension, processed_id)
+        output = {
+            "file_id": processed_id,
+            "filename": f"cleaned-{record['filename']}",
+            "file_type": record["file_type"],
+            "file_size": storage.processed_path(processed_id, extension).stat().st_size,
+            "uploaded_at": utc_now(),
+            "status": "processed",
+            "stored_name": f"{processed_id}{extension}",
+            "source_file_ids": [file_id],
+            "cleaning_summary": summary,
+            "row_count": int(len(result)),
+            "column_count": int(len(result.columns)),
+        }
+        metadata.save_file(output)
+    except CleaningError as exc:
+        if processed_id:
+            storage.delete_processed(processed_id, extension)
+        return jsonify({"error": str(exc)}), 400
+    except FileNotFoundError:
+        if processed_id:
+            storage.delete_processed(processed_id, extension)
+        return jsonify({"error": "The stored dataset could not be found."}), 404
+    except (OSError, RuntimeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        if processed_id:
+            try:
+                storage.delete_processed(processed_id, extension)
+            except (OSError, ValueError) as cleanup_error:
+                current_app.logger.exception("Could not remove incomplete cleaned dataset %s: %s", processed_id, cleanup_error)
+        current_app.logger.exception("Dataset cleaning failed for %s: %s", file_id, exc)
+        return jsonify({"error": "The dataset could not be cleaned."}), (500 if isinstance(exc, RuntimeError) else 422)
+    return jsonify({"dataset": output, "summary": summary}), 201
+
+
+@files_blueprint.get("/files/<file_id>/download")
+def download_file(file_id: str):
+    storage = current_app.extensions["etl_storage"]
+    record = MetadataService(storage).get_file(file_id)
+    if record is None:
+        return jsonify({"error": "File not found."}), 404
+    try:
+        path = DatasetService(storage).path_for(record)
+        return send_file(path, as_attachment=True, download_name=record["filename"], conditional=True)
+    except FileNotFoundError:
+        return jsonify({"error": "The stored dataset could not be found."}), 404
+    except (OSError, ValueError) as exc:
+        current_app.logger.exception("Dataset download failed for %s: %s", file_id, exc)
+        return jsonify({"error": "The dataset could not be downloaded."}), 500
+
+
 @files_blueprint.delete("/files/<file_id>")
 def delete_file(file_id: str):
     storage = current_app.extensions["etl_storage"]
@@ -66,7 +275,10 @@ def delete_file(file_id: str):
         return jsonify({"error": "File not found."}), 404
     extension = f".{record.get('file_type', '')}"
     try:
-        storage.delete_upload(file_id, extension)
+        if record.get("status") == "processed":
+            storage.delete_processed(file_id, extension)
+        else:
+            storage.delete_upload(file_id, extension)
         metadata.delete_file(file_id)
     except (OSError, RuntimeError, ValueError) as exc:
         current_app.logger.exception("Dataset deletion failed: %s", exc)

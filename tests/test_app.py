@@ -120,6 +120,59 @@ def test_accepts_valid_json_and_xlsx_datasets(client):
     assert (storage.uploads_dir / xlsx_response.json["stored_name"]).is_file()
 
 
+def test_previews_csv_json_and_xlsx_datasets(client):
+    test_client, _storage = client
+    csv_response = test_client.post(
+        "/api/files/upload",
+        data={"file": (io.BytesIO(b"region,sales\nNorth,12\nSouth,18\n"), "sales.csv")},
+        content_type="multipart/form-data",
+    )
+    json_response = test_client.post(
+        "/api/files/upload",
+        data={"file": (io.BytesIO(b'[{"region":"North","sales":12},{"region":"South","sales":18}]'), "sales.json")},
+        content_type="multipart/form-data",
+    )
+    workbook_stream = io.BytesIO()
+    workbook = Workbook()
+    workbook.active.append(["region", "sales"])
+    workbook.active.append(["North", 12])
+    workbook.save(workbook_stream)
+    xlsx_response = test_client.post(
+        "/api/files/upload",
+        data={"file": (io.BytesIO(workbook_stream.getvalue()), "sales.xlsx")},
+        content_type="multipart/form-data",
+    )
+
+    expected_rows = (
+        (csv_response, ["North", "12"]),
+        (json_response, ["North", 12]),
+        (xlsx_response, ["North", 12]),
+    )
+    for uploaded, expected_first_row in expected_rows:
+        assert uploaded.status_code == 201
+        preview = test_client.get(f"/api/files/{uploaded.json['file_id']}/preview")
+        assert preview.status_code == 200
+        assert preview.json["columns"] == ["region", "sales"]
+        assert preview.json["rows"][0] == expected_first_row
+        assert preview.json["has_more"] is False
+
+
+def test_preview_is_limited_and_reports_additional_rows(client):
+    test_client, _storage = client
+    rows = "value\n" + "".join(f"{number}\n" for number in range(101))
+    uploaded = test_client.post(
+        "/api/files/upload",
+        data={"file": (io.BytesIO(rows.encode()), "large.csv")},
+        content_type="multipart/form-data",
+    )
+    preview = test_client.get(f"/api/files/{uploaded.json['file_id']}/preview")
+
+    assert preview.status_code == 200
+    assert len(preview.json["rows"]) == 100
+    assert preview.json["has_more"] is True
+    assert test_client.get("/api/files/" + "a" * 32 + "/preview").status_code == 404
+
+
 def test_workflow_json_can_be_created_loaded_listed_and_deleted(client):
     test_client, storage = client
     payload = {
