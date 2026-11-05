@@ -160,6 +160,22 @@ class DatasetService:
             "has_more": offset + len(rows) < total_rows,
         }
 
+    @staticmethod
+    def preview_frame(frame: pd.DataFrame, page_size: int = 50) -> dict[str, Any]:
+        if page_size < 1 or page_size > MAX_PREVIEW_PAGE_SIZE:
+            raise ValueError(f"Preview row count must be between 1 and {MAX_PREVIEW_PAGE_SIZE}.")
+        rows = [
+            [_json_value(value) for value in row]
+            for row in frame.iloc[:page_size].itertuples(index=False, name=None)
+        ]
+        return {
+            "columns": [str(column) for column in frame.columns],
+            "rows": rows,
+            "page_size": page_size,
+            "total_rows": int(len(frame)),
+            "has_more": len(frame) > len(rows),
+        }
+
     def write_processed(self, frame: pd.DataFrame, extension: str, file_id: str) -> None:
         path = self.storage.processed_path(file_id, extension)
         if extension == ".csv":

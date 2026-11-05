@@ -12,11 +12,14 @@ from openpyxl.utils.exceptions import InvalidFileException
 from ..services.metadata_service import MetadataService
 from ..services.dataset_service import DatasetService
 from ..services.cleaning_service import CleaningError, apply_cleaning, quality_stats
+from ..services.workflow_execution_service import WorkflowExecutionError, cleaning_node, transform_node
 from ..utils.file_validator import validate_dataset
 from ..utils.helpers import utc_now
 
 files_blueprint = Blueprint("files", __name__)
 PREVIEW_ROW_LIMIT = 100
+CLEANING_PREVIEW_ROW_LIMIT = 50
+MAX_CLEANING_STEPS = 20
 
 
 def _display_value(value):
@@ -208,6 +211,78 @@ def dataset_summary(file_id: str):
     return _dataset_inspection(file_id)
 
 
+def _cleaning_preview_frame(frame, filename: str, file_type: str, page_size: int) -> dict:
+    preview = DatasetService.preview_frame(frame, page_size)
+    if file_type == "csv":
+        preview["rows"] = [
+            [None if value is None else str(value) for value in row]
+            for row in preview["rows"]
+        ]
+    return {"filename": filename, **preview}
+
+
+@files_blueprint.post("/files/<file_id>/clean/preview")
+def preview_cleaning(file_id: str):
+    storage = current_app.extensions["etl_storage"]
+    record = MetadataService(storage).get_file(file_id)
+    if record is None:
+        return jsonify({"error": "File not found."}), 404
+
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Cleaning preview settings must be an object."}), 400
+    operations = payload.get("operations", [])
+    if not isinstance(operations, list) or len(operations) > MAX_CLEANING_STEPS:
+        return jsonify({"error": f"Choose no more than {MAX_CLEANING_STEPS} cleaning operations."}), 400
+    if any(not isinstance(operation, dict) or not isinstance(operation.get("operation"), str) for operation in operations):
+        return jsonify({"error": "Each cleaning step must specify an operation."}), 400
+
+    page_size = payload.get("page_size", CLEANING_PREVIEW_ROW_LIMIT)
+    if not isinstance(page_size, int) or isinstance(page_size, bool) or not 1 <= page_size <= CLEANING_PREVIEW_ROW_LIMIT:
+        return jsonify({"error": f"Preview row count must be between 1 and {CLEANING_PREVIEW_ROW_LIMIT}."}), 400
+    selected_step = payload.get("step", len(operations) - 1)
+    if not isinstance(selected_step, int) or isinstance(selected_step, bool) or selected_step < -1 or selected_step >= len(operations):
+        if not (not operations and selected_step == -1):
+            return jsonify({"error": "Choose a valid cleaning step to preview."}), 400
+
+    try:
+        frame = DatasetService(storage).read(record)
+        original = frame
+        selected_frame = original if selected_step == -1 else None
+        stages = []
+        for index, config in enumerate(operations):
+            frame = transform_node(cleaning_node(config), [frame])
+            stats = quality_stats(frame)
+            stages.append({
+                "step": index,
+                "operation": config["operation"],
+                **stats,
+                "schema": [{"name": str(column), "dtype": str(frame[column].dtype)} for column in frame.columns],
+            })
+            if index == selected_step:
+                selected_frame = frame
+        if selected_frame is None:
+            selected_frame = frame
+        response = {
+            "filename": record["filename"],
+            "selected_step": selected_step,
+            "step_name": operations[selected_step]["operation"] if selected_step >= 0 else None,
+            "stages": stages,
+            "before": _cleaning_preview_frame(original, record["filename"], record["file_type"], page_size),
+            "after": _cleaning_preview_frame(selected_frame, record["filename"], record["file_type"], page_size),
+            "before_stats": quality_stats(original),
+            "after_stats": quality_stats(selected_frame),
+        }
+    except (CleaningError, WorkflowExecutionError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except FileNotFoundError:
+        return jsonify({"error": "The stored dataset could not be found."}), 404
+    except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        current_app.logger.exception("Cleaning preview failed for %s: %s", file_id, exc)
+        return jsonify({"error": "The dataset could not be previewed with these cleaning settings."}), 422
+    return jsonify(response)
+
+
 @files_blueprint.post("/files/<file_id>/clean")
 def clean_file(file_id: str):
     storage = current_app.extensions["etl_storage"]
@@ -220,9 +295,36 @@ def clean_file(file_id: str):
     try:
         frame = DatasetService(storage).read(record)
         operation = request.get_json(silent=True)
-        result, summary = apply_cleaning(frame, operation)
-        if operation.get("operation") == "inspect_outliers":
-            return jsonify({"inspection": summary, "quality": quality_stats(frame)})
+        if isinstance(operation, dict) and "operations" in operation:
+            operations = operation["operations"]
+            if not isinstance(operations, list) or not operations or len(operations) > MAX_CLEANING_STEPS:
+                raise CleaningError(f"Choose between 1 and {MAX_CLEANING_STEPS} cleaning operations.")
+            before = quality_stats(frame)
+            result = frame
+            for config in operations:
+                if not isinstance(config, dict) or not isinstance(config.get("operation"), str):
+                    raise CleaningError("Each cleaning step must specify an operation.")
+                result = transform_node(cleaning_node(config), [result])
+            summary = {
+                "operation": "sequence",
+                "affected_records": abs(before["rows"] - len(result)),
+                "before": before,
+                "after": quality_stats(result),
+                "steps": len(operations),
+            }
+        elif isinstance(operation, dict) and operation.get("operation") == "filter_rows":
+            before = quality_stats(frame)
+            result = transform_node(cleaning_node(operation), [frame])
+            summary = {
+                "operation": "filter_rows",
+                "affected_records": len(frame) - len(result),
+                "before": before,
+                "after": quality_stats(result),
+            }
+        else:
+            result, summary = apply_cleaning(frame, operation)
+            if operation.get("operation") == "inspect_outliers":
+                return jsonify({"inspection": summary, "quality": quality_stats(frame)})
         processed_id = storage.new_id()
         DatasetService(storage).write_processed(result, extension, processed_id)
         output = {
@@ -240,6 +342,10 @@ def clean_file(file_id: str):
         }
         metadata.save_file(output)
     except CleaningError as exc:
+        if processed_id:
+            storage.delete_processed(processed_id, extension)
+        return jsonify({"error": str(exc)}), 400
+    except WorkflowExecutionError as exc:
         if processed_id:
             storage.delete_processed(processed_id, extension)
         return jsonify({"error": str(exc)}), 400

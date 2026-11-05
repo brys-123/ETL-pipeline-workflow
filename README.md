@@ -70,7 +70,7 @@ Do not place `.env`, uploaded datasets, generated metadata, or logs under source
 
 - Upload CSV, XLSX, and JSON datasets, individually or in batches, with size and content validation.
 - Inspect schema, column types, missing values, duplicates, and numeric statistics; search and paginate dataset previews.
-- Apply cleaning operations to derived copies, including missing-value handling, duplicate removal, text normalization, type conversion, column changes, and IQR outlier handling. Source uploads remain unchanged.
+- Preview cleaning operations live and chain them sequentially before creating a processed copy, including missing-value handling, duplicate removal, row filters, text normalization, type conversion, column changes, and IQR outlier handling. Preview rows are capped at 50 and source uploads remain unchanged.
 - Build workflows with connected input, transformation, merge, preview, and export nodes. Branching is supported, while merge nodes require two connected inputs.
 - Validate and run workflows, including filters, column selection and renaming, aggregation, two-input joins, and CSV/XLSX/JSON exports. Runs report per-node status; failed nodes skip their dependents while independent branches can finish.
 - Add a Preview Data node to inspect the actual intermediate rows at that pipeline step, including searchable and paginated output.
@@ -89,7 +89,8 @@ Do not place `.env`, uploaded datasets, generated metadata, or logs under source
 | `GET` | `/api/files/<file_id>/preview` | Search and page through dataset rows (`page`, `page_size`, `q`) |
 | `GET` | `/api/files/<file_id>/schema` | Inspect dataset columns and inferred types |
 | `GET` | `/api/files/<file_id>/summary` | Dataset quality and numeric statistics |
-| `POST` | `/api/files/<file_id>/clean` | Apply a cleaning operation to a derived copy |
+| `POST` | `/api/files/<file_id>/clean/preview` | Temporarily preview a sequential cleaning operation list without saving a dataset |
+| `POST` | `/api/files/<file_id>/clean` | Apply one operation or a cleaning sequence to a derived copy |
 | `GET` | `/api/files/<file_id>/download` | Download an uploaded or processed dataset |
 | `DELETE` | `/api/files/<file_id>` | Delete a stored dataset and its metadata |
 | `GET` | `/api/workflows` | List saved workflow JSON |

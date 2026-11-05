@@ -46,7 +46,13 @@ def apply_cleaning(frame: pd.DataFrame, config: dict[str, Any]) -> tuple[pd.Data
             value = config.get("value", "")
             for name in columns:
                 missing = int(result[name].isna().sum())
-                result[name] = result[name].fillna(value)
+                fill_value = value
+                if pd.api.types.is_numeric_dtype(result[name]) and isinstance(value, str):
+                    try:
+                        fill_value = pd.to_numeric(value, errors="raise")
+                    except (TypeError, ValueError):
+                        result[name] = result[name].astype("object")
+                result[name] = result[name].fillna(fill_value)
                 affected += missing
         elif method in {"mean", "median"}:
             for name in columns:

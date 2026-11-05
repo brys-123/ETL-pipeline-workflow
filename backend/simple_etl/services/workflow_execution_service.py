@@ -66,7 +66,18 @@ def _filter(frame: pd.DataFrame, config: dict[str, Any]) -> pd.DataFrame:
     return frame.loc[mask].copy()
 
 
-def _transform(node: dict[str, Any], inputs: list[pd.DataFrame]) -> pd.DataFrame:
+def cleaning_node(config: dict[str, Any]) -> dict[str, Any]:
+    operation = config.get("operation")
+    node_type = {
+        "filter_rows": "filter_rows",
+        "remove_duplicates": "remove_duplicates",
+        "select_columns": "select_columns",
+        "rename_column": "rename_columns",
+    }.get(operation, "clean_data")
+    return {"id": "cleaning-preview", "name": "Cleaning operation", "type": node_type, "config": config}
+
+
+def transform_node(node: dict[str, Any], inputs: list[pd.DataFrame]) -> pd.DataFrame:
     node_type = node["type"]
     config = node.get("config", {})
     if node_type == "merge_data":
@@ -179,7 +190,7 @@ class WorkflowExecutionService:
                 elif node_type in PREVIEW_TYPES:
                     frame_by_node[node_id] = inputs[0]
                 else:
-                    frame_by_node[node_id] = _transform(node, inputs)
+                    frame_by_node[node_id] = transform_node(node, inputs)
             except Exception as exc:
                 message = str(exc) if isinstance(exc, WorkflowExecutionError) else f"Could not inspect input data: {exc}"
                 node_errors[node_id] = message
@@ -387,7 +398,7 @@ class WorkflowExecutionService:
                             frame_by_node[node_id] = frame
                             rows = len(frame)
                         else:
-                            frame_by_node[node_id] = _transform(node, inputs)
+                            frame_by_node[node_id] = transform_node(node, inputs)
                             rows = len(frame_by_node[node_id])
 
                     frame = frame_by_node[node_id]
