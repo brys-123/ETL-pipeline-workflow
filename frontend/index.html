@@ -92,7 +92,10 @@
               <div class="designer-heading"><p class="section-overline">DATA VISUALIZATION</p><h1 id="designer-page-title">Dashboard Designer</h1><p>Create a shareable dashboard from your actual datasets.</p></div>
               <div class="designer-toolbar">
                 <label class="designer-name"><span>DASHBOARD NAME</span><input id="designer-name" maxlength="120" value="Untitled dashboard" /></label>
-                <label class="designer-dataset"><span>DATASET</span><select id="designer-dataset"><option value="">Select a dataset</option></select></label>
+                <div class="designer-dataset-row">
+                  <label class="designer-dataset"><span>DATASET</span><select id="designer-dataset"><option value="">Select a dataset</option></select></label>
+                  <label class="designer-dataset designer-dataset-source"><span>SOURCE</span><select id="designer-dataset-source"><option value="all">All datasets</option><option value="imported">Imported datasets</option><option value="processed">Processed datasets</option></select></label>
+                </div>
                 <button class="toolbar-button" id="designer-upload" type="button" title="Upload dataset"><i class="bi bi-cloud-arrow-up"></i><span>Upload</span></button>
                 <button class="toolbar-button" id="designer-new" type="button"><i class="bi bi-plus-lg"></i><span>New</span></button>
                 <button class="toolbar-button" id="designer-undo" type="button" title="Undo" aria-label="Undo"><i class="bi bi-arrow-counterclockwise"></i></button>
@@ -115,6 +118,8 @@
                 <section class="designer-component-group"><h3>CHARTS</h3><div class="designer-component-list">
                   <button data-add-component="bar"><i class="bi bi-bar-chart"></i><span>Bar Chart<small>Compare categories</small></span></button>
                   <button data-add-component="horizontalBar"><i class="bi bi-bar-chart-steps"></i><span>Horizontal Bar<small>Rank categories</small></span></button>
+                  <button data-add-component="stackedBar"><i class="bi bi-bar-chart-steps"></i><span>Stacked Bar<small>Compare series by category</small></span></button>
+                  <button data-add-component="percentStackedBar"><i class="bi bi-bar-chart-steps"></i><span>100% Stacked Bar<small>Compare category proportions</small></span></button>
                   <button data-add-component="line"><i class="bi bi-graph-up"></i><span>Line Chart<small>Show change over time</small></span></button>
                   <button data-add-component="area"><i class="bi bi-graph-up-arrow"></i><span>Area Chart<small>Show cumulative trends</small></span></button>
                   <button data-add-component="pie"><i class="bi bi-pie-chart"></i><span>Pie Chart<small>Compare proportions</small></span></button>
@@ -194,7 +199,7 @@
               <aside class="config-column" id="config-column">
                 <section class="config-panel"><div class="builder-panel-heading"><span class="section-overline">NODE SETTINGS</span><h2 id="config-title">Configuration</h2><p id="config-subtitle">Select a node to review its details.</p></div><div id="config-content" class="config-content"><div class="config-empty"><span><i class="bi bi-sliders"></i></span><p>Choose a node on the canvas to configure its saved options.</p></div></div></section>
                 <section class="node-preview-window" id="node-preview-window" aria-live="polite" hidden>
-                  <div class="builder-panel-heading"><span class="section-overline">PIPELINE DATA</span><h2><i class="bi bi-eye"></i> Data preview</h2><p>Rows flowing through the selected Preview Data node.</p></div>
+                  <div class="builder-panel-heading"><span class="section-overline">PIPELINE DATA</span><h2><i class="bi bi-eye"></i> Data preview</h2><p>Output produced by the selected workflow node.</p><button class="button-secondary button-sm" id="node-preview-refresh" type="button" title="Refresh node output" aria-label="Refresh node output"><i class="bi bi-arrow-clockwise"></i></button></div>
                   <div class="node-preview-panel"><div class="node-preview-state" id="node-preview-state"></div><div id="node-preview-result"></div></div>
                 </section>
               </aside>

@@ -158,6 +158,46 @@ def start_workflow_execution(workflow_id: str):
     return jsonify(result), 202
 
 
+@workflows_blueprint.post("/workflows/<workflow_id>/save-output")
+def save_workflow_output(workflow_id: str):
+    metadata = MetadataService(current_app.extensions["etl_storage"])
+    try:
+        workflow = metadata.get_workflow(workflow_id)
+    except ValueError:
+        workflow = None
+    if workflow is None:
+        return jsonify({"error": "Workflow not found."}), 404
+    payload = request.get_json(silent=True) or {}
+    node_id = payload.get("node_id")
+    if not isinstance(node_id, str) or not node_id:
+        outputs = [node for node in workflow.get("nodes", []) if node.get("type") in {"csv_output", "excel_output", "json_output"}]
+        if not outputs:
+            return jsonify({"error": "The workflow has no output node to save."}), 400
+        node_id = outputs[0]["id"]
+    dataset_id = metadata.stable_dataset_id(workflow_id, node_id)
+    filename = payload.get("filename") or next(
+        (node.get("config", {}).get("filename") for node in workflow.get("nodes", []) if node.get("id") == node_id),
+        "workflow-output",
+    )
+    record = {
+        "file_id": dataset_id,
+        "dataset_id": dataset_id,
+        "filename": filename,
+        "file_type": payload.get("file_type") or "csv",
+        "file_size": payload.get("file_size", 0),
+        "uploaded_at": utc_now(),
+        "last_updated": utc_now(),
+        "status": "processed",
+        "stored_name": f"{dataset_id}.{(payload.get('file_type') or 'csv')}",
+        "source_type": "processed",
+        "workflow_id": workflow_id,
+        "output_node_id": node_id,
+        "dataset_version": 1,
+    }
+    metadata.save_file(record)
+    return jsonify({"dataset": record, "dataset_id": dataset_id})
+
+
 @workflows_blueprint.post("/workflows/<workflow_id>/execute")
 def execute_saved_workflow(workflow_id: str):
     metadata = MetadataService(current_app.extensions["etl_storage"])
@@ -207,7 +247,12 @@ def list_executions():
             if query in str(item.get("workflow_name", "")).casefold()
             or query in str(item.get("execution_id", "")).casefold()
         ]
-    return jsonify(sorted(executions, key=lambda item: item.get("started_at", ""), reverse=True))
+    ordered_executions = sorted(
+        enumerate(executions),
+        key=lambda item: (item[1].get("started_at", ""), item[0]),
+        reverse=True,
+    )
+    return jsonify([item for _index, item in ordered_executions])
 
 
 @workflows_blueprint.get("/executions/<execution_id>")
@@ -316,8 +361,13 @@ def get_latest_workflow_node_preview(workflow_id: str, node_id: str):
             if item.get("execution_id") == execution_id and item.get("workflow_id") == workflow_id
         ), None)
     else:
+        ordered_executions = sorted(
+            enumerate(executions),
+            key=lambda item: (item[1].get("started_at", ""), item[0]),
+            reverse=True,
+        )
         execution = next((
-            item for item in sorted(executions, key=lambda item: item.get("started_at", ""), reverse=True)
+            item for _index, item in ordered_executions
             if item.get("workflow_id") == workflow_id
         ), None)
     if execution is None:

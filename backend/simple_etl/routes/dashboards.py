@@ -3,6 +3,7 @@ import math
 
 from flask import Blueprint, current_app, jsonify, request
 
+from ..services.dataset_service import DatasetService
 from ..services.metadata_service import MetadataService
 from ..utils.helpers import utc_now
 
@@ -99,6 +100,36 @@ def get_dashboard(dashboard_id: str):
     if dashboard is None:
         return jsonify({"error": "Dashboard not found."}), 404
     return jsonify(dashboard)
+
+
+@dashboards_blueprint.get("/dashboards/<dashboard_id>/data")
+def dashboard_data(dashboard_id: str):
+    storage = current_app.extensions["etl_storage"]
+    if not storage.file_id_is_valid(dashboard_id):
+        return jsonify({"error": "Dashboard identifier is invalid."}), 400
+    dashboard = MetadataService(storage).get_dashboard(dashboard_id)
+    if dashboard is None:
+        return jsonify({"error": "Dashboard not found."}), 404
+    dataset_id = dashboard.get("dataset_id") or dashboard.get("dataset") or dashboard.get("data_source")
+    if not dataset_id:
+        return jsonify({"error": "This dashboard has no dataset selected."}), 400
+    dataset = MetadataService(storage).get_file(dataset_id)
+    if dataset is None:
+        return jsonify({"error": "The dashboard dataset could not be found."}), 404
+    try:
+        preview = DatasetService(storage).preview(dataset, 1, 1000)
+        return jsonify({
+            "dashboard_id": dashboard_id,
+            "dataset_id": dataset_id,
+            "dataset_name": dataset.get("filename"),
+            "source_type": dataset.get("source_type") or ("processed" if dataset.get("status") == "processed" else "imported"),
+            "preview": preview,
+            "rows": preview.get("rows", []),
+            "columns": preview.get("columns", []),
+        })
+    except (OSError, ValueError, TypeError, UnicodeDecodeError) as exc:
+        current_app.logger.exception("Dashboard data refresh failed for %s: %s", dashboard_id, exc)
+        return jsonify({"error": "The dashboard dataset could not be loaded."}), 422
 
 
 @dashboards_blueprint.put("/dashboards/<dashboard_id>")

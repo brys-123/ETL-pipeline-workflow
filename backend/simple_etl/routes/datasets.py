@@ -26,16 +26,23 @@ def _dataset_record(dataset_id: str):
 def list_datasets():
     storage = current_app.extensions["etl_storage"]
     records = MetadataService(storage).list_files()
+    source = request.args.get("source", "all").strip().casefold()
     datasets = [
         record for record in records
         if record.get("status") in {"uploaded", "processed"}
         and isinstance(record.get("file_id"), str)
         and storage.file_id_is_valid(record["file_id"])
     ]
+    if source in {"imported", "uploaded"}:
+        datasets = [record for record in datasets if record.get("status") == "uploaded"]
+    elif source in {"processed", "saved"}:
+        datasets = [record for record in datasets if record.get("status") == "processed"]
     dataset_service = DatasetService(storage)
     discovered = []
     for record in datasets:
         item = dict(record)
+        item.setdefault("dataset_id", record.get("dataset_id") or record.get("file_id"))
+        item["source_type"] = item.get("source_type") or ("processed" if item.get("status") == "processed" else "imported")
         try:
             inspection = dataset_service.inspect(record)
             item["rows"] = inspection["rows"]
@@ -46,6 +53,18 @@ def list_datasets():
             item["column_count"] = record.get("column_count", 0)
         discovered.append(item)
     return jsonify(sorted(discovered, key=lambda record: record.get("uploaded_at", ""), reverse=True))
+
+
+@datasets_blueprint.get("/datasets/<dataset_id>")
+def get_dataset(dataset_id: str):
+    storage = current_app.extensions["etl_storage"]
+    record = MetadataService(storage).get_file(dataset_id)
+    if record is None:
+        return jsonify({"error": "Dataset not found."}), 404
+    item = dict(record)
+    item.setdefault("dataset_id", item.get("dataset_id") or dataset_id)
+    item["source_type"] = item.get("source_type") or ("processed" if item.get("status") == "processed" else "imported")
+    return jsonify(item)
 
 
 @datasets_blueprint.get("/datasets/<dataset_id>/schema")
@@ -61,6 +80,29 @@ def dataset_schema(dataset_id: str):
         current_app.logger.exception("Dataset schema lookup failed for %s: %s", dataset_id, exc)
         return jsonify({"error": "The dataset schema could not be read."}), 422
     return jsonify(inspection)
+
+
+@datasets_blueprint.get("/datasets/<dataset_id>/refresh")
+@datasets_blueprint.post("/datasets/<dataset_id>/refresh")
+def dataset_refresh(dataset_id: str):
+    record, error_response = _dataset_record(dataset_id)
+    if error_response:
+        return error_response
+    try:
+        inspection = DatasetService(current_app.extensions["etl_storage"]).inspect(record)
+        refreshed = dict(record)
+        refreshed["dataset_id"] = refreshed.get("dataset_id") or dataset_id
+        refreshed["source_type"] = refreshed.get("source_type") or ("processed" if refreshed.get("status") == "processed" else "imported")
+        refreshed["last_updated"] = refreshed.get("last_updated") or refreshed.get("updated_at") or refreshed.get("uploaded_at")
+        refreshed["rows"] = inspection["rows"]
+        refreshed["column_count"] = inspection["columns"]
+        MetadataService(current_app.extensions["etl_storage"]).save_file(refreshed)
+        return jsonify({"dataset": refreshed, "inspection": inspection})
+    except FileNotFoundError:
+        return jsonify({"error": "The stored dataset could not be found."}), 404
+    except (OSError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        current_app.logger.exception("Dataset refresh failed for %s: %s", dataset_id, exc)
+        return jsonify({"error": "The dataset could not be refreshed."}), 422
 
 
 @datasets_blueprint.get("/datasets/<dataset_id>/preview")

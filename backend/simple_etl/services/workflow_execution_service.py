@@ -371,25 +371,29 @@ class WorkflowExecutionService:
                             base_name = secure_filename(str(node.get("config", {}).get("filename", "")).strip())
                             if not base_name:
                                 raise WorkflowExecutionError("Enter a valid output filename.", node_id)
-                            filename = f"{base_name}-{execution_id[:8]}{extension}"
-                            file_id = uuid4().hex
+                            file_id = node.get("config", {}).get("dataset_id") or self.metadata.stable_dataset_id(workflow["workflow_id"], node_id)
+                            managed_filename = f"{base_name}{extension}"
                             self.datasets.write_processed(frame, extension, file_id)
                             created_files.append((file_id, extension))
                             output = {
                                 "file_id": file_id,
-                                "filename": filename,
+                                "dataset_id": file_id,
+                                "filename": managed_filename,
                                 "file_type": extension[1:],
                                 "file_size": self.storage.processed_path(file_id, extension).stat().st_size,
                                 "uploaded_at": utc_now(),
+                                "last_updated": utc_now(),
                                 "status": "processed",
                                 "stored_name": f"{file_id}{extension}",
                                 "source_file_ids": [
                                     node["config"]["file_id"] for node in input_ancestors(node_id)
                                 ],
                                 "workflow_id": workflow["workflow_id"],
+                                "output_node_id": node_id,
                                 "execution_id": execution_id,
                                 "row_count": int(len(frame)),
                                 "column_count": int(len(frame.columns)),
+                                "source_type": "processed",
                             }
                             output_records.append(output)
                             rows = len(frame)
@@ -416,23 +420,22 @@ class WorkflowExecutionService:
                         for ancestor in input_ancestors(node_id)
                         if (source := self.metadata.get_file(ancestor.get("config", {}).get("file_id")))
                     ]
-                    if node_type in PREVIEW_TYPES:
-                        self.datasets.write_preview(frame, execution_id, node_id)
-                        output_metadata = {
-                            "node_id": node_id,
-                            "node_name": node.get("name", node_id),
-                            "node_type": node_type,
-                            "status": "success",
-                            "row_count": int(len(frame)),
-                            "column_count": int(len(frame.columns)),
-                            "columns": column_metadata,
-                            "missing_cells": int(frame.isna().sum().sum()),
-                            "dataset_name": ", ".join(sorted(set(source_names))) or node.get("name", "Workflow output"),
-                            "execution_id": execution_id,
-                            "executed_at": completed_at,
-                            "output_ref": {"kind": "node_preview", "node_id": node_id},
-                        }
-                        record["previews"][node_id] = output_metadata
+                    self.datasets.write_preview(frame, execution_id, node_id)
+                    output_metadata = {
+                        "node_id": node_id,
+                        "node_name": node.get("name", node_id),
+                        "node_type": node_type,
+                        "status": "success",
+                        "row_count": int(len(frame)),
+                        "column_count": int(len(frame.columns)),
+                        "columns": column_metadata,
+                        "missing_cells": int(frame.isna().sum().sum()),
+                        "dataset_name": ", ".join(sorted(set(source_names))) or node.get("name", "Workflow output"),
+                        "execution_id": execution_id,
+                        "executed_at": completed_at,
+                        "output_ref": {"kind": "node_preview", "node_id": node_id},
+                    }
+                    record["previews"][node_id] = output_metadata
                     record["operations"].append({
                         "node_id": node_id,
                         "node_name": node.get("name", node_id),

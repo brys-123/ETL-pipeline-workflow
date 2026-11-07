@@ -152,6 +152,107 @@ def test_workflow_execution_exports_and_history(tmp_path):
     assert stored[0]["status"] == "completed"
 
 
+def test_each_workflow_node_preview_returns_its_execution_output(tmp_path):
+    client, storage = _client(tmp_path)
+    source = _upload(client, "customers.csv", b"id,name,region\n1,Ada,North\n1,Ada,North\n2,Lin,South\n3,Grace,North\n")
+    workflow = _workflow(client, [
+        {"id": "input", "type": "csv_input", "name": "Customers", "config": {"file_id": source["file_id"]}},
+        {"id": "dedupe", "type": "remove_duplicates", "name": "Remove duplicates", "config": {}},
+        {"id": "filter", "type": "filter_rows", "name": "North only", "config": {"column": "region", "operator": "equals", "value": "North"}},
+        {"id": "rename", "type": "rename_columns", "name": "Rename customer", "config": {"from": "name", "to": "customer"}},
+        {"id": "preview", "type": "preview_data", "name": "Preview", "config": {}},
+        {"id": "output", "type": "csv_output", "name": "CSV", "config": {"filename": "customers"}},
+    ], [
+        {"id": "a", "source": "input", "target": "dedupe"},
+        {"id": "b", "source": "dedupe", "target": "filter"},
+        {"id": "c", "source": "filter", "target": "rename"},
+        {"id": "d", "source": "rename", "target": "preview"},
+        {"id": "e", "source": "preview", "target": "output"},
+    ])
+
+    run = client.post(f"/api/workflows/{workflow['workflow_id']}/execute")
+    assert run.status_code == 200, run.json
+    execution_id = run.json["execution_id"]
+    expected_rows = {"input": 4, "dedupe": 3, "filter": 2, "rename": 2, "preview": 2, "output": 2}
+    for node_id, row_count in expected_rows.items():
+        response = client.get(
+            f"/api/workflows/{workflow['workflow_id']}/nodes/{node_id}/preview"
+            f"?execution_id={execution_id}"
+        )
+        assert response.status_code == 200, response.json
+        assert response.json["execution_id"] == execution_id
+        assert response.json["status"] == "success"
+        assert response.json["total_rows"] == row_count
+        assert response.json["page_size"] == 50
+        assert response.json["preview"]["node_id"] == node_id
+    renamed = client.get(
+        f"/api/workflows/{workflow['workflow_id']}/nodes/rename/preview?execution_id={execution_id}"
+    ).json
+    assert renamed["columns"] == ["id", "customer", "region"]
+    assert renamed["rows"][0][1] == "Ada"
+    latest = client.get(f"/api/workflows/{workflow['workflow_id']}/nodes/rename/preview")
+    assert latest.status_code == 200
+    assert latest.json["execution_id"] == execution_id
+
+    rename_node = next(node for node in workflow["nodes"] if node["id"] == "rename")
+    rename_node["config"]["from"] = "missing"
+    updated = client.post("/api/workflows", json=workflow)
+    assert updated.status_code == 200, updated.json
+    failed = client.post(f"/api/workflows/{workflow['workflow_id']}/execute")
+    assert failed.status_code == 422, failed.json
+    executions = json.loads((storage.metadata_dir / "executions.json").read_text(encoding="utf-8"))
+    workflow_runs = [item for item in executions if item["workflow_id"] == workflow["workflow_id"]]
+    for item in workflow_runs:
+        item["started_at"] = "2026-01-01T00:00:00+00:00"
+    storage.write_json(storage.metadata_dir / "executions.json", executions)
+    latest_failure = client.get(f"/api/workflows/{workflow['workflow_id']}/nodes/rename/preview")
+    assert latest_failure.status_code == 200
+    assert latest_failure.json["execution_id"] == failed.json["execution"]["execution_id"]
+    assert latest_failure.json["status"] == "failed"
+    assert "existing column" in latest_failure.json["error"]
+    assert latest_failure.json["rows"] == []
+
+
+def test_preview_node_can_be_a_workflow_terminal(tmp_path):
+    client, _storage = _client(tmp_path)
+    source = _upload(client, "input.csv", b"value\n1\n2\n")
+    workflow = _workflow(client, [
+        {"id": "input", "type": "csv_input", "name": "Input", "config": {"file_id": source["file_id"]}},
+        {"id": "preview", "type": "preview_data", "name": "Preview", "config": {}},
+    ], [{"id": "edge", "source": "input", "target": "preview"}])
+
+    validation = client.post(f"/api/workflows/{workflow['workflow_id']}/validate")
+    assert validation.status_code == 200, validation.json
+    run = client.post(f"/api/workflows/{workflow['workflow_id']}/execute")
+    assert run.status_code == 200, run.json
+    preview = client.get(
+        f"/api/workflows/{workflow['workflow_id']}/nodes/preview/preview"
+        f"?execution_id={run.json['execution_id']}"
+    )
+    assert preview.status_code == 200, preview.json
+    assert preview.json["rows"] == [[1], [2]]
+
+
+def test_empty_node_output_preview_keeps_schema(tmp_path):
+    client, _storage = _client(tmp_path)
+    source = _upload(client, "empty.csv", b"value,name\n")
+    workflow = _workflow(client, [
+        {"id": "input", "type": "csv_input", "name": "Input", "config": {"file_id": source["file_id"]}},
+        {"id": "preview", "type": "preview_data", "name": "Preview", "config": {}},
+    ], [{"id": "edge", "source": "input", "target": "preview"}])
+
+    run = client.post(f"/api/workflows/{workflow['workflow_id']}/execute")
+    assert run.status_code == 200, run.json
+    preview = client.get(
+        f"/api/workflows/{workflow['workflow_id']}/nodes/preview/preview"
+        f"?execution_id={run.json['execution_id']}"
+    )
+    assert preview.status_code == 200, preview.json
+    assert preview.json["total_rows"] == 0
+    assert preview.json["columns"] == ["value", "name"]
+    assert preview.json["rows"] == []
+
+
 def test_failed_workflow_is_recorded_without_outputs(tmp_path):
     client, _storage = _client(tmp_path)
     source = _upload(client, "input.csv", b"name,value\nA,2\n")
@@ -225,6 +326,14 @@ def test_workflow_merge_uses_two_connected_inputs_and_exports_json(tmp_path):
     rows = json.loads(output.data)
     assert rows[0]["name"] == "Ada"
     assert rows[1]["score"] == 95
+    for node_id in ("left", "right", "merge", "output"):
+        preview = client.get(
+            f"/api/workflows/{workflow['workflow_id']}/nodes/{node_id}/preview"
+            f"?execution_id={result.json['execution_id']}"
+        )
+        assert preview.status_code == 200, preview.json
+        assert preview.json["status"] == "success"
+        assert preview.json["total_rows"] == 2
 
 
 def test_async_workflow_preview_captures_intermediate_data(tmp_path):
@@ -276,8 +385,9 @@ def test_failed_preview_skips_dependents_but_runs_independent_branch(tmp_path, m
         {"id": "c", "source": "second", "target": "independent"},
     ])
 
-    def fail_preview(*_args, **_kwargs):
-        raise OSError("Preview storage unavailable")
+    def fail_preview(_self, _frame, _execution_id, node_id):
+        if node_id == "preview":
+            raise OSError("Preview storage unavailable")
 
     monkeypatch.setattr(DatasetService, "write_preview", fail_preview)
     failed = client.post(f"/api/workflows/{workflow['workflow_id']}/execute")

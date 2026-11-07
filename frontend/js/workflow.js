@@ -34,6 +34,7 @@ let runNodeStatuses = {}
 let validationErrors = {}
 let lastExecutionId = null
 let previewPage = 1
+let previewNodeId = null
 let previewSearchTimer
 let previewRequestId = 0
 let workflowRunMessage = null
@@ -199,6 +200,21 @@ function sourceFilesForNode(node, sourceIndex = null) {
   return [...fileIds].map((fileId) => uploadedFiles.find((file) => file.file_id === fileId)).filter(Boolean)
 }
 
+function connectionDetails(node) {
+  const incoming = edges.filter((edge) => edge.target === node.id)
+    .map((edge) => nodes.find((item) => item.id === edge.source)?.name)
+    .filter(Boolean)
+  const outgoing = edges.filter((edge) => edge.source === node.id)
+    .map((edge) => nodes.find((item) => item.id === edge.target)?.name)
+    .filter(Boolean)
+  return `<div class="node-connection-info"><strong>Connections</strong><span>From: ${escapeHTML(incoming.join(', ') || (node.type.endsWith('_input') ? 'Source dataset' : 'None'))}</span><span>To: ${escapeHTML(outgoing.join(', ') || (node.type.endsWith('_output') ? 'Workflow output' : 'None'))}</span></div>`
+}
+
+function hasConfiguredUpstream(node) {
+  if (node.type.endsWith('_input')) return sourceFilesForNode(node).length > 0
+  return sourceFilesForNode(node).length > 0
+}
+
 function loadDatasetColumns(file) {
   if (!datasetColumns.has(file.file_id)) {
     const request = api(`/api/files/${encodeURIComponent(file.file_id)}/preview`)
@@ -247,40 +263,60 @@ function renderConfig() {
   const content = document.getElementById('config-content')
   const previewWindow = document.getElementById('node-preview-window')
   const configColumn = document.getElementById('config-column')
-  previewWindow.hidden = true
-  configColumn.classList.remove('has-preview')
+  previewWindow.hidden = !node
+  configColumn.classList.toggle('has-preview', Boolean(node))
   if (!node) {
+    previewRequestId += 1
+    previewNodeId = null
+    previewPage = 1
+    document.getElementById('node-preview-state').innerHTML = ''
+    document.getElementById('node-preview-result').innerHTML = ''
     document.getElementById('config-title').textContent = 'Configuration'
     document.getElementById('config-subtitle').textContent = 'Select a node to review its details.'
     content.innerHTML = '<div class="config-empty"><span><i class="bi bi-sliders"></i></span><p>Choose a node on the canvas to configure its saved options.</p></div>'
     return
   }
+  if (previewNodeId !== node.id) {
+    previewNodeId = node.id
+    previewPage = 1
+  }
   const definition = nodeDefinition(node.type)
   document.getElementById('config-title').textContent = node.name
   document.getElementById('config-subtitle').textContent = definition.group
+  const refreshPreview = document.getElementById('node-preview-refresh')
+  refreshPreview.onclick = () => {
+    previewPage = 1
+    if (runNodeStatuses[node.id]?.status === 'success' && lastExecutionId) {
+      loadNodePreview(node, previewPage, '')
+    } else if (!hasConfiguredUpstream(node)) {
+      document.getElementById('node-preview-state').innerHTML = '<strong>No upstream data available.</strong><p>Connect this node to a valid input and select a dataset for the input node.</p>'
+    } else {
+      document.getElementById('node-preview-state').innerHTML = '<strong>Run the workflow to generate this node\'s output preview.</strong>'
+    }
+  }
+  const previewState = runNodeStatuses[node.id]?.status
+  const previewError = validationErrors[node.id] || runNodeStatuses[node.id]?.error || workflowRunMessage
+  const previewReady = previewState === 'success' && lastExecutionId && hasConfiguredUpstream(node)
+  const previewStateElement = document.getElementById('node-preview-state')
+  const previewResultElement = document.getElementById('node-preview-result')
+  previewResultElement.innerHTML = ''
+  if (!hasConfiguredUpstream(node)) {
+    previewStateElement.innerHTML = '<strong>No upstream data available. Connect this node to a valid input.</strong><p>Select a dataset for the input node, then run the workflow.</p>'
+  } else if (previewError) {
+    previewStateElement.innerHTML = `<strong>Preview unavailable.</strong><p>${escapeHTML(previewError)}</p>`
+  } else if (!lastExecutionId) {
+    previewStateElement.innerHTML = '<strong>Run the workflow to generate this node\'s output preview.</strong>'
+  } else if (previewState === 'failed' || previewState === 'skipped') {
+    previewStateElement.innerHTML = `<strong>Node ${escapeHTML(previewState)}.</strong><p>${escapeHTML(runNodeStatuses[node.id]?.error || 'An upstream node did not complete successfully.')}</p>`
+  } else if (previewState === 'running' || previewState === 'pending') {
+    previewStateElement.innerHTML = '<strong>Loading node output…</strong><p>Waiting for this node to finish processing its input.</p>'
+  } else if (previewReady) {
+    previewStateElement.innerHTML = '<strong>Loading node output…</strong><p>Fetching rows captured during this execution.</p>'
+  } else {
+    previewStateElement.innerHTML = '<strong>Node output is not available.</strong><p>Run the workflow again to capture this node\'s output.</p>'
+  }
   if (node.type === 'preview_data' || node.type === 'view_data') {
-    const state = runNodeStatuses[node.id]?.status
-    const validationError = validationErrors[node.id]
-    const previewReady = state === 'success' && lastExecutionId
-    previewWindow.hidden = false
-    configColumn.classList.add('has-preview')
-    document.getElementById('node-preview-state').innerHTML = !edges.some((edge) => edge.target === node.id)
-      ? '<strong>Connect this node to an upstream input.</strong><p>A preview appears here after data flows into this node.</p>'
-      : validationError
-        ? `<strong>Workflow validation failed.</strong><p>${escapeHTML(validationError)}</p>`
-        : workflowRunMessage
-          ? `<strong>Workflow could not run.</strong><p>${escapeHTML(workflowRunMessage)}</p>`
-        : !lastExecutionId
-          ? '<strong>Run this workflow to generate a preview.</strong><p>Preview rows for this pipeline step will appear below the node settings.</p>'
-          : state === 'running'
-            ? '<strong>Preview node is running…</strong><p>Waiting for upstream data.</p>'
-            : state === 'failed' || state === 'skipped'
-              ? `<strong>Preview ${escapeHTML(state)}.</strong><p>${escapeHTML(runNodeStatuses[node.id]?.error || 'A dependency did not complete successfully.')}</p>`
-              : state === 'success'
-                ? '<strong>Loading preview data…</strong><p>Fetching rows captured at this workflow step.</p>'
-                : '<strong>Workflow is running.</strong><p>Waiting for this node to process its input.</p>'
-    document.getElementById('node-preview-result').innerHTML = ''
-    content.innerHTML = `<p class="config-description">${escapeHTML(definition.description)}</p><span class="config-type"><i class="bi ${definition.icon}"></i>Pipeline preview</span><button class="config-remove" type="button" id="remove-selected-node"><i class="bi bi-trash3"></i> Remove node</button>`
+    content.innerHTML = `<p class="config-description">${escapeHTML(definition.description)}</p><span class="config-type"><i class="bi ${definition.icon}"></i>Pipeline preview</span>${connectionDetails(node)}<button class="config-remove" type="button" id="remove-selected-node"><i class="bi bi-trash3"></i> Remove node</button>`
     if (previewReady) loadNodePreview(node, previewPage, '')
     document.getElementById('remove-selected-node').addEventListener('click', () => removeNode(node.id))
     return
@@ -327,7 +363,7 @@ function renderConfig() {
   const phaseNote = node.type === 'merge_data'
     ? 'Connect two input branches to this node, then choose a matching key from each dataset.'
     : 'Settings are applied when the workflow runs. Output files are stored separately from source datasets.'
-  content.innerHTML = `<p class="config-description">${escapeHTML(definition.description)}</p><span class="config-type"><i class="bi ${definition.icon}"></i>${escapeHTML(definition.group)} node</span><form id="node-config-form">${fields}<div class="config-warning"><i class="bi bi-info-circle"></i><span>${escapeHTML(phaseNote)}</span></div><div class="config-actions"><button class="button-secondary" type="button" id="cancel-node-config">Cancel</button><button class="button-primary" type="submit">Save settings</button></div></form><button class="config-remove" type="button" id="remove-selected-node"><i class="bi bi-trash3"></i> Remove node</button>`
+  content.innerHTML = `<p class="config-description">${escapeHTML(definition.description)}</p><span class="config-type"><i class="bi ${definition.icon}"></i>${escapeHTML(definition.group)} node</span>${connectionDetails(node)}<form id="node-config-form">${fields}<div class="config-warning"><i class="bi bi-info-circle"></i><span>${escapeHTML(phaseNote)}</span></div><div class="config-actions"><button class="button-secondary" type="button" id="cancel-node-config">Cancel</button><button class="button-primary" type="submit">Save settings</button></div></form><button class="config-remove" type="button" id="remove-selected-node"><i class="bi bi-trash3"></i> Remove node</button>`
   populateColumnSelectors(node, renderVersion)
   document.getElementById('node-config-form').addEventListener('submit', (event) => {
     event.preventDefault()
@@ -343,6 +379,7 @@ function renderConfig() {
   })
   document.getElementById('cancel-node-config').addEventListener('click', renderConfig)
   document.getElementById('remove-selected-node').addEventListener('click', () => removeNode(node.id))
+  if (previewReady) loadNodePreview(node, previewPage, '')
 }
 
 async function loadNodePreview(node, page, query) {
@@ -353,11 +390,14 @@ async function loadNodePreview(node, page, query) {
   const executionId = lastExecutionId
   state.innerHTML = '<strong>Loading preview data…</strong><p>Fetching rows captured at this workflow step.</p>'
   try {
-    const params = new URLSearchParams({ page: String(page), page_size: '100' })
+    const params = new URLSearchParams({ execution_id: executionId, page: String(page), page_size: '50' })
     if (query) params.set('q', query)
-    const data = await api(`/api/executions/${encodeURIComponent(executionId)}/previews/${encodeURIComponent(node.id)}?${params}`)
+    const data = await api(`/api/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(node.id)}/preview?${params}`)
     if (requestId !== previewRequestId || selectedNodeId !== node.id || lastExecutionId !== executionId) return
-    if (!data?.preview || !Array.isArray(data.columns) || !Array.isArray(data.rows)) {
+    if (data?.status === 'failed' || data?.status === 'skipped') {
+      throw new Error(data.error || `This node ${data.status}.`)
+    }
+    if (data?.no_output || !data?.preview || !Array.isArray(data.columns) || !Array.isArray(data.rows)) {
       throw new Error('The preview response did not contain table data.')
     }
     const schemaColumns = Array.isArray(data.preview.columns) ? data.preview.columns : []
@@ -366,17 +406,26 @@ async function loadNodePreview(node, page, query) {
       return `<th><span>${escapeHTML(name)}</span><small>${escapeHTML(schema?.dtype || 'unknown')} · ${Number(schema?.missing || 0)} empty</small></th>`
     }).join('')
     const rows = data.rows.map((row) => `<tr>${row.map((value) => `<td>${escapeHTML(value ?? '')}</td>`).join('')}</tr>`).join('')
-    state.innerHTML = `<strong>${escapeHTML(data.preview.dataset_name)}</strong><p>Execution ${escapeHTML(executionId)} · ${Number(data.preview.row_count).toLocaleString()} rows · ${Number(data.preview.column_count).toLocaleString()} columns · ${Number(data.preview.missing_cells).toLocaleString()} empty cells · Success</p>`
+    state.innerHTML = `<strong>${escapeHTML(data.node?.name || node.name)}</strong><p>Execution ${escapeHTML(executionId)} · ${Number(data.total_rows).toLocaleString()} rows · ${Number(data.total_columns).toLocaleString()} columns · ${Number(data.preview.missing_cells).toLocaleString()} empty cells · Success</p>`
     target.innerHTML = `<label class="table-search node-preview-search"><i class="bi bi-search"></i><input id="node-preview-search" type="search" value="${escapeHTML(query)}" placeholder="Search preview rows" aria-label="Search preview data" /></label><div class="node-preview-table-wrap"><table class="studio-table"><thead><tr>${columns}</tr></thead><tbody>${rows || `<tr><td class="table-empty" colspan="${data.columns.length || 1}">No rows on this page.</td></tr>`}</tbody></table></div><div class="node-preview-pagination"><span>Page ${data.page} of ${data.total_pages} · ${Number(data.total_rows).toLocaleString()} matching rows</span><button class="button-secondary button-sm" id="node-preview-previous" type="button" ${data.page <= 1 ? 'disabled' : ''}>Previous</button><button class="button-secondary button-sm" id="node-preview-next" type="button" ${!data.has_more ? 'disabled' : ''}>Next</button></div>`
     document.getElementById('node-preview-search').addEventListener('input', () => {
       window.clearTimeout(previewSearchTimer)
-      previewSearchTimer = window.setTimeout(() => loadNodePreview(node, 1, document.getElementById('node-preview-search')?.value.trim() || ''), 180)
+      previewSearchTimer = window.setTimeout(() => {
+        previewPage = 1
+        loadNodePreview(node, previewPage, document.getElementById('node-preview-search')?.value.trim() || '')
+      }, 180)
     })
-    document.getElementById('node-preview-previous').addEventListener('click', () => loadNodePreview(node, page - 1, query))
-    document.getElementById('node-preview-next').addEventListener('click', () => loadNodePreview(node, page + 1, query))
+    document.getElementById('node-preview-previous').addEventListener('click', () => {
+      previewPage = page - 1
+      loadNodePreview(node, previewPage, query)
+    })
+    document.getElementById('node-preview-next').addEventListener('click', () => {
+      previewPage = page + 1
+      loadNodePreview(node, previewPage, query)
+    })
   } catch (error) {
     if (requestId === previewRequestId && selectedNodeId === node.id && lastExecutionId === executionId) {
-      state.innerHTML = `<strong>Preview unavailable.</strong><p>${escapeHTML(error.message)}</p>`
+      state.innerHTML = `<strong>Preview unavailable.</strong><p>${escapeHTML(error.payload?.error || error.message)}</p>`
       target.innerHTML = ''
     }
   }
@@ -495,13 +544,17 @@ async function openWorkflow() {
   if (!id) return showToast('Choose a saved workflow first.', 'error')
   try {
     const workflow = await api(`/api/workflows/${encodeURIComponent(id)}`)
+    const executions = await api(`/api/executions?workflow_id=${encodeURIComponent(id)}`)
+    const latestExecution = executions[0]
     workflowId = workflow.workflow_id
     nodes = workflow.nodes
     edges = workflow.edges
     selectedNodeId = null
-    runNodeStatuses = {}
-    validationErrors = {}
-    lastExecutionId = null
+    runNodeStatuses = latestExecution?.node_statuses || {}
+    validationErrors = Object.fromEntries(Object.entries(runNodeStatuses)
+      .filter(([, status]) => ['failed', 'skipped'].includes(status.status))
+      .map(([nodeId, status]) => [nodeId, status.error || `Node ${status.status}.`]))
+    lastExecutionId = latestExecution?.execution_id || null
     workflowRunMessage = null
     document.getElementById('workflow-name').value = workflow.name
     document.getElementById('canvas-status').textContent = `Saved · ${new Date(workflow.updated_at).toLocaleString()}`
@@ -606,14 +659,6 @@ async function runWorkflow() {
       updateExecutionView(result)
     }
     if (result.status !== 'running') updateExecutionView(result, true)
-    const selectedPreviewNode = nodes.find((node) =>
-      node.id === selectedNodeId
-      && (node.type === 'preview_data' || node.type === 'view_data')
-      && runNodeStatuses[node.id]?.status === 'success',
-    )
-    if (result.status === 'completed' && selectedPreviewNode) {
-      await loadNodePreview(selectedPreviewNode, previewPage, '')
-    }
     if (result.status === 'completed') {
       const summary = result.summary || {}
       const outputLinks = (result.output_file_ids || []).map((fileId, index) => {

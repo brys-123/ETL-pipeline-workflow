@@ -45,8 +45,9 @@ def plan_workflow(workflow: dict[str, Any], metadata: Any) -> tuple[list[dict[st
         return [], ["Workflow node identifiers must be unique."]
     if not any(node.get("type") in INPUT_TYPES for node in nodes):
         errors.append("Add at least one configured input node.")
-    if not any(node.get("type") in {key for key in OUTPUT_TYPES if key != "view_data"} for node in nodes):
-        errors.append("Add at least one CSV, Excel, or JSON output node.")
+    sink_types = set(OUTPUT_TYPES) | PREVIEW_TYPES
+    if not any(node.get("type") in sink_types for node in nodes):
+        errors.append("Add at least one file output or Preview Data node.")
 
     incoming: dict[str, list[str]] = defaultdict(list)
     outgoing: dict[str, list[str]] = defaultdict(list)
@@ -139,7 +140,7 @@ def plan_workflow(workflow: dict[str, Any], metadata: Any) -> tuple[list[dict[st
         errors.append("Workflow connections contain a cycle.")
 
     input_ids = {node.get("id") for node in nodes if node.get("type") in INPUT_TYPES}
-    output_ids = {node.get("id") for node in nodes if node.get("type") in OUTPUT_TYPES}
+    output_ids = {node.get("id") for node in nodes if node.get("type") in sink_types}
     reachable: set[str] = set(input_ids)
     for node_id in ordered_ids:
         if node_id in reachable:

@@ -19,6 +19,7 @@ class FileSystemStorage:
         self.logs_dir = self.root / "logs"
         self.metadata_dir = self.root / "metadata"
         self.previews_dir = self.metadata_dir / "previews"
+        self.datasets_dir = self.metadata_dir / "datasets"
         for directory in (
             self.uploads_dir,
             self.processed_dir,
@@ -27,6 +28,7 @@ class FileSystemStorage:
             self.logs_dir,
             self.metadata_dir,
             self.previews_dir,
+            self.datasets_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
 

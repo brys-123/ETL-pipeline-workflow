@@ -166,6 +166,30 @@
 
 #page-workflow .node-preview-window .builder-panel-heading {
   flex: 0 0 auto;
+  position: relative;
+  padding-right: 42px;
+}
+
+#page-workflow #node-preview-refresh {
+  position: absolute;
+  top: 0;
+  right: 4px;
+}
+
+#page-workflow .node-connection-info {
+  display: grid;
+  gap: 4px;
+  margin: 12px 0;
+  padding: 9px 0;
+  border-top: 1px solid var(--builder-border);
+  border-bottom: 1px solid var(--builder-border);
+  color: #456b55;
+  font-size: 10px;
+}
+
+#page-workflow .node-connection-info strong {
+  color: #174d35;
+  font-size: 11px;
 }
 
 #page-workflow .node-preview-panel {
