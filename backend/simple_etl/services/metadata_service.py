@@ -6,6 +6,8 @@ from .storage_service import FileSystemStorage
 
 
 class MetadataService:
+    DATASET_REFERENCE_KEYS = {"file_id", "dataset_id", "dataset", "data_source"}
+
     def __init__(self, storage: FileSystemStorage):
         self.storage = storage
         self.files_index = storage.metadata_dir / "files.json"
@@ -21,8 +23,9 @@ class MetadataService:
     def dataset_registry_path(self, dataset_id: str) -> Path:
         if not self.storage.file_id_is_valid(dataset_id):
             raise ValueError("Invalid dataset identifier.")
-        path = (self.datasets_dir / f"{dataset_id}.json").resolve()
-        if path.parent != self.datasets_dir.resolve():
+        candidate = self.datasets_dir / f"{dataset_id}.json"
+        path = candidate.resolve()
+        if path.parent != self.datasets_dir.resolve() or path != candidate:
             raise ValueError("Invalid dataset registry location.")
         return path
 
@@ -89,14 +92,52 @@ class MetadataService:
         )
 
     def delete_file(self, file_id: str) -> None:
-        self.storage.write_json(
-            self.files_index,
-            [record for record in self.list_files() if record.get("file_id") != file_id],
-        )
+        records = self.list_files()
+        registry_path = self.dataset_registry_path(file_id) if self.storage.file_id_is_valid(file_id) else None
+        registry = self.storage.read_json(registry_path, None) if registry_path and registry_path.exists() else None
         try:
-            self.delete_dataset(file_id)
-        except ValueError:
-            pass
+            self.storage.write_json(
+                self.files_index,
+                [record for record in records if record.get("file_id") != file_id],
+            )
+            if registry_path and registry_path.exists():
+                registry_path.unlink()
+        except Exception:
+            self.storage.write_json(self.files_index, records)
+            if registry_path and isinstance(registry, dict):
+                self.storage.write_json(registry_path, registry)
+            raise
+
+    @classmethod
+    def _references_dataset(cls, value: Any, dataset_id: str) -> bool:
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if key in cls.DATASET_REFERENCE_KEYS:
+                    if child == dataset_id or isinstance(child, list) and dataset_id in child:
+                        return True
+                if cls._references_dataset(child, dataset_id):
+                    return True
+        elif isinstance(value, list):
+            return any(cls._references_dataset(item, dataset_id) for item in value)
+        return False
+
+    def dataset_dependencies(self, dataset_ids: set[str]) -> dict[str, dict[str, list[dict[str, str]]]]:
+        dependencies = {dataset_id: {"workflows": [], "dashboards": []} for dataset_id in dataset_ids}
+        for workflow in self.list_workflows():
+            for dataset_id in dataset_ids:
+                if self._references_dataset(workflow.get("nodes", []), dataset_id):
+                    dependencies[dataset_id]["workflows"].append({
+                        "id": workflow.get("workflow_id", ""),
+                        "name": workflow.get("name", "Unnamed workflow"),
+                    })
+        for dashboard in self.list_dashboards():
+            for dataset_id in dataset_ids:
+                if self._references_dataset(dashboard, dataset_id):
+                    dependencies[dataset_id]["dashboards"].append({
+                        "id": dashboard.get("dashboard_id", ""),
+                        "name": dashboard.get("name", "Unnamed dashboard"),
+                    })
+        return dependencies
 
     def list_workflows(self) -> list[dict[str, Any]]:
         workflows: list[dict[str, Any]] = []
@@ -169,3 +210,9 @@ class MetadataService:
         executions = [item for item in executions if item.get("execution_id") != record.get("execution_id")]
         executions.append(record)
         self.storage.write_json(self.executions_index, executions)
+
+    def delete_executions(self, execution_ids: set[str]) -> int:
+        executions = self.list_executions()
+        remaining = [item for item in executions if item.get("execution_id") not in execution_ids]
+        self.storage.write_json(self.executions_index, remaining)
+        return len(executions) - len(remaining)

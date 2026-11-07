@@ -1,10 +1,11 @@
-import { api, escapeHTML, showToast } from './app.js'
+import { api, deleteWithConfirmation, escapeHTML, showToast } from './app.js'
 
 let files = []
 let previewFileRecord = null
 let previewPage = 1
 const previewPageSize = 50
 let previewSearchTimer
+const selectedFileIds = new Set()
 
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`
@@ -23,10 +24,52 @@ function renderFiles(query = '') {
   document.getElementById('files-count').textContent = String(files.length)
   document.getElementById('nav-file-count').textContent = String(files.length)
   if (!filtered.length) {
-    body.innerHTML = `<tr><td class="table-empty" colspan="6">${files.length ? 'No files match your search.' : 'No datasets uploaded yet.'}</td></tr>`
+    body.innerHTML = `<tr><td class="table-empty" colspan="7">${files.length ? 'No files match your search.' : 'No datasets uploaded yet.'}</td></tr>`
+    updateFileSelection(filtered)
     return
   }
-  body.innerHTML = filtered.map((file) => `<tr data-searchable="${escapeHTML(file.filename)}"><td><span class="file-name-cell"><span class="file-row-icon"><i class="bi ${file.file_type === 'json' ? 'bi-braces' : file.file_type === 'xlsx' ? 'bi-file-earmark-spreadsheet' : 'bi-filetype-csv'}"></i></span><strong>${escapeHTML(file.filename)}</strong></span></td><td><span class="file-type-chip">${escapeHTML(file.file_type)}</span></td><td><span class="file-size">${formatSize(file.file_size)}</span></td><td><span class="file-date">${formatDate(file.uploaded_at)}</span></td><td><span class="file-status ${escapeHTML(file.status)}">${escapeHTML(file.status)}</span></td><td><button class="preview-file" data-preview-file="${escapeHTML(file.file_id)}" aria-label="Preview ${escapeHTML(file.filename)}" title="Preview dataset"><i class="bi bi-eye"></i></button><button class="delete-file" data-delete-file="${escapeHTML(file.file_id)}" aria-label="Delete ${escapeHTML(file.filename)}" title="Delete file"><i class="bi bi-trash3"></i></button></td></tr>`).join('')
+  body.innerHTML = filtered.map((file) => `<tr data-searchable="${escapeHTML(file.filename)}"><td><input type="checkbox" data-select-file="${escapeHTML(file.file_id)}" aria-label="Select ${escapeHTML(file.filename)}" ${selectedFileIds.has(file.file_id) ? 'checked' : ''} /></td><td><span class="file-name-cell"><span class="file-row-icon"><i class="bi ${file.file_type === 'json' ? 'bi-braces' : file.file_type === 'xlsx' ? 'bi-file-earmark-spreadsheet' : 'bi-filetype-csv'}"></i></span><strong>${escapeHTML(file.filename)}</strong></span></td><td><span class="file-type-chip">${escapeHTML(file.file_type)}</span></td><td><span class="file-size">${formatSize(file.file_size)}</span></td><td><span class="file-date">${formatDate(file.uploaded_at)}</span></td><td><span class="file-status ${escapeHTML(file.status)}">${escapeHTML(file.status)}</span></td><td><button class="preview-file" data-preview-file="${escapeHTML(file.file_id)}" aria-label="Preview ${escapeHTML(file.filename)}" title="Preview dataset"><i class="bi bi-eye"></i></button><button class="delete-file" data-delete-file="${escapeHTML(file.file_id)}" aria-label="Delete ${escapeHTML(file.filename)}" title="Delete file"><i class="bi bi-trash3"></i></button></td></tr>`).join('')
+  updateFileSelection(filtered)
+}
+
+function updateFileSelection(visibleFiles = files) {
+  for (const id of selectedFileIds) {
+    if (!files.some((file) => file.file_id === id)) selectedFileIds.delete(id)
+  }
+  const visibleIds = visibleFiles.map((file) => file.file_id)
+  const selectedVisible = visibleIds.filter((id) => selectedFileIds.has(id)).length
+  const selectAll = document.getElementById('files-select-all')
+  selectAll.checked = visibleIds.length > 0 && selectedVisible === visibleIds.length
+  selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visibleIds.length
+  selectAll.disabled = visibleIds.length === 0
+  document.getElementById('files-selected-count').textContent = `${selectedFileIds.size} selected`
+  document.getElementById('files-delete-selected').disabled = selectedFileIds.size === 0
+  document.getElementById('files-clear-all').disabled = files.length === 0
+}
+
+async function deleteUploadedFiles(ids, mode = 'selected') {
+  const clearAll = mode === 'clear'
+  const selectedIds = clearAll ? files.map((file) => file.file_id) : ids
+  if (!selectedIds.length) return
+  const url = clearAll ? '/api/files/clear' : '/api/files/delete-selected'
+  const options = clearAll ? { method: 'DELETE' } : { method: 'POST', body: JSON.stringify({ file_ids: selectedIds }) }
+  const result = await deleteWithConfirmation({
+    url,
+    options,
+    itemType: 'uploaded file',
+    count: selectedIds.length,
+    confirmedUrl: clearAll ? `${url}?confirm_dependencies=true` : url,
+    confirmedOptions: clearAll ? options : { method: 'POST', body: JSON.stringify({ file_ids: selectedIds, confirm_dependencies: true }) },
+  })
+  if (!result) return
+  const deleted = Array.isArray(result.deleted) ? result.deleted : result.deleted ? [{ file_id: result.file_id }] : []
+  for (const item of deleted) selectedFileIds.delete(item.file_id)
+  const failures = result.failed || []
+  if (deleted.length) showToast(`${deleted.length} uploaded file${deleted.length === 1 ? '' : 's'} permanently deleted.`)
+  if (failures.length) showToast(`${failures.length} file${failures.length === 1 ? '' : 's'} could not be deleted: ${failures.map((item) => item.error).join(' ')}`, 'error')
+  await loadFiles()
+  window.dispatchEvent(new CustomEvent('app:refresh'))
+  window.dispatchEvent(new CustomEvent('app:operations-refresh'))
 }
 
 export async function previewFile(file) {
@@ -158,15 +201,34 @@ export function initFiles() {
     const button = event.target.closest('[data-delete-file]')
     if (!button) return
     const file = files.find((item) => item.file_id === button.dataset.deleteFile)
-    if (!file || !window.confirm(`Delete ${file.filename} from local storage?`)) return
+    if (!file) return
     try {
-      await api(`/api/files/${encodeURIComponent(file.file_id)}`, { method: 'DELETE' })
-      showToast(`${file.filename} deleted.`)
-      await loadFiles()
-      window.dispatchEvent(new CustomEvent('app:refresh'))
+      await deleteUploadedFiles([file.file_id], 'single')
     } catch (error) {
       showToast(error.message || 'Could not delete the file.', 'error')
     }
+  })
+  document.getElementById('files-table-body').addEventListener('change', (event) => {
+    const checkbox = event.target.closest('[data-select-file]')
+    if (!checkbox) return
+    if (checkbox.checked) selectedFileIds.add(checkbox.dataset.selectFile)
+    else selectedFileIds.delete(checkbox.dataset.selectFile)
+    updateFileSelection(files.filter((file) => file.filename.toLowerCase().includes(document.getElementById('file-search').value.trim().toLowerCase())))
+  })
+  document.getElementById('files-select-all').addEventListener('change', (event) => {
+    const query = document.getElementById('file-search').value.trim().toLowerCase()
+    const visibleFiles = files.filter((file) => file.filename.toLowerCase().includes(query))
+    for (const file of visibleFiles) {
+      if (event.target.checked) selectedFileIds.add(file.file_id)
+      else selectedFileIds.delete(file.file_id)
+    }
+    renderFiles(document.getElementById('file-search').value)
+  })
+  document.getElementById('files-delete-selected').addEventListener('click', () => {
+    deleteUploadedFiles([...selectedFileIds]).catch((error) => showToast(error.message || 'Selected files could not be deleted.', 'error'))
+  })
+  document.getElementById('files-clear-all').addEventListener('click', () => {
+    deleteUploadedFiles([], 'clear').catch((error) => showToast(error.message || 'Files could not be cleared.', 'error'))
   })
   document.getElementById('close-data-preview').addEventListener('click', () => {
     document.getElementById('data-preview-dialog').close()

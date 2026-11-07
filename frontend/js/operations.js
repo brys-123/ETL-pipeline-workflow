@@ -1,4 +1,4 @@
-import { api, escapeHTML, showToast } from './app.js'
+import { api, deleteWithConfirmation, escapeHTML, showToast } from './app.js'
 
 let uploadedFiles = []
 let selectedFile = null
@@ -13,6 +13,8 @@ let cleaningStages = []
 let cleaningPreviewRequest = 0
 let previewTimer
 let historyTimer
+const selectedProcessedIds = new Set()
+const selectedExecutionIds = new Set()
 
 function formatSize(bytes) {
   if (bytes < 1024) return `${bytes} B`
@@ -29,13 +31,78 @@ async function loadProcessed() {
   try {
     const files = await api('/api/files')
     const processed = files.filter((file) => file.status === 'processed')
+    for (const id of selectedProcessedIds) {
+      if (!processed.some((file) => file.file_id === id)) selectedProcessedIds.delete(id)
+    }
     document.getElementById('processed-count').textContent = String(processed.length)
     document.getElementById('processed-table-body').innerHTML = processed.length
-      ? processed.map((file) => `<tr><td>${escapeHTML(file.filename)}</td><td>${escapeHTML(file.file_type.toUpperCase())}</td><td>${formatSize(file.file_size)}</td><td>${Number.isInteger(file.row_count) ? file.row_count : '—'}</td><td>${escapeHTML(formatDate(file.uploaded_at))}</td><td><a class="button-secondary button-sm" href="/api/files/${encodeURIComponent(file.file_id)}/download" download><i class="bi bi-download"></i> Download</a></td></tr>`).join('')
-      : '<tr><td class="table-empty" colspan="6">No processed datasets yet.</td></tr>'
+      ? processed.map((file) => `<tr><td><input type="checkbox" data-select-processed="${escapeHTML(file.file_id)}" aria-label="Select ${escapeHTML(file.filename)}" ${selectedProcessedIds.has(file.file_id) ? 'checked' : ''} /></td><td>${escapeHTML(file.filename)}</td><td>${escapeHTML(file.file_type.toUpperCase())}</td><td>${formatSize(file.file_size)}</td><td>${Number.isInteger(file.row_count) ? file.row_count : '—'}</td><td>${escapeHTML(formatDate(file.uploaded_at))}</td><td><a class="button-secondary button-sm" href="/api/files/${encodeURIComponent(file.file_id)}/download" download><i class="bi bi-download"></i> Download</a><button class="table-action danger-action" data-delete-processed="${escapeHTML(file.file_id)}" aria-label="Delete ${escapeHTML(file.filename)}" title="Delete dataset"><i class="bi bi-trash3"></i></button></td></tr>`).join('')
+      : '<tr><td class="table-empty" colspan="7">No processed datasets yet.</td></tr>'
+    updateSelectionControls('processed', processed)
   } catch (error) {
     showToast(error.message || 'Could not load processed datasets.', 'error')
   }
+}
+
+function updateSelectionControls(type, visibleRecords) {
+  const isProcessed = type === 'processed'
+  const selected = isProcessed ? selectedProcessedIds : selectedExecutionIds
+  const prefix = isProcessed ? 'processed' : 'history'
+  const selectAll = document.getElementById(`${prefix}-select-all`)
+  const visibleIds = visibleRecords.map((record) => isProcessed ? record.file_id : record.execution_id)
+  const selectedVisible = visibleIds.filter((id) => selected.has(id)).length
+  selectAll.checked = visibleIds.length > 0 && selectedVisible === visibleIds.length
+  selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visibleIds.length
+  selectAll.disabled = visibleIds.length === 0
+  document.getElementById(`${prefix}-selected-count`).textContent = `${selected.size} selected`
+  document.getElementById(`${prefix}-delete-selected`).disabled = selected.size === 0
+  document.getElementById(`${prefix}-clear-all`).disabled = visibleRecords.length === 0
+}
+
+async function deleteProcessed(ids, mode = 'selected') {
+  const clearAll = mode === 'clear'
+  if (!clearAll && !ids.length) return
+  const records = (await api('/api/files')).filter((file) => file.status === 'processed')
+  const selectedIds = clearAll ? records.map((file) => file.file_id) : ids
+  if (!selectedIds.length) return
+  const url = clearAll ? '/api/processed/clear' : '/api/processed/delete-selected'
+  const options = clearAll ? { method: 'DELETE' } : { method: 'POST', body: JSON.stringify({ file_ids: selectedIds }) }
+  const result = await deleteWithConfirmation({
+    url,
+    options,
+    itemType: 'processed dataset',
+    count: selectedIds.length,
+    confirmedUrl: clearAll ? `${url}?confirm_dependencies=true` : url,
+    confirmedOptions: clearAll ? options : { method: 'POST', body: JSON.stringify({ file_ids: selectedIds, confirm_dependencies: true }) },
+  })
+  if (!result) return
+  const deleted = Array.isArray(result.deleted) ? result.deleted : result.deleted ? [{ file_id: result.file_id }] : []
+  for (const item of deleted) selectedProcessedIds.delete(item.file_id)
+  if (deleted.length) showToast(`${deleted.length} processed dataset${deleted.length === 1 ? '' : 's'} permanently deleted.`)
+  if (result.failed?.length) showToast(`${result.failed.length} dataset${result.failed.length === 1 ? '' : 's'} could not be deleted.`, 'error')
+  await loadProcessed()
+  window.dispatchEvent(new CustomEvent('app:refresh'))
+}
+
+async function deleteHistory(ids, mode = 'selected') {
+  const clearAll = mode === 'clear'
+  if (!clearAll && !ids.length) return
+  const selectedIds = clearAll
+    ? (await api('/api/executions')).map((run) => run.execution_id)
+    : ids
+  if (!selectedIds.length) return
+  const url = clearAll ? '/api/executions/clear' : '/api/executions/delete-selected'
+  const options = clearAll ? { method: 'DELETE' } : { method: 'POST', body: JSON.stringify({ execution_ids: selectedIds }) }
+  const result = await deleteWithConfirmation({ url, options, itemType: 'execution record', count: selectedIds.length })
+  if (!result) return
+  const deleted = Array.isArray(result.deleted) ? result.deleted : result.deleted ? [{ execution_id: result.execution_id, artifact_failures: [] }] : []
+  for (const item of deleted) selectedExecutionIds.delete(item.execution_id)
+  const failedArtifacts = deleted.flatMap((item) => item.artifact_failures || [])
+  if (deleted.length) showToast(`${deleted.length} execution record${deleted.length === 1 ? '' : 's'} deleted; processed datasets and workflows were preserved.`)
+  if (result.failed?.length || failedArtifacts.length) showToast(`${result.failed?.length || 0} execution record(s) and ${failedArtifacts.length} artifact(s) could not be deleted.`, 'error')
+  document.getElementById('execution-detail').hidden = true
+  await loadHistory()
+  window.dispatchEvent(new CustomEvent('app:refresh'))
 }
 
 async function loadHistory() {
@@ -46,13 +113,17 @@ async function loadHistory() {
     if (query) params.set('q', query)
     if (status) params.set('status', status)
     const runs = await api(`/api/executions${params.size ? `?${params}` : ''}`)
+    for (const id of selectedExecutionIds) {
+      if (!runs.some((run) => run.execution_id === id)) selectedExecutionIds.delete(id)
+    }
     const body = document.getElementById('execution-table-body')
     body.innerHTML = runs.length
       ? runs.map((run) => {
         const duration = run.summary?.duration_seconds
-        return `<tr><td>${escapeHTML(run.workflow_name)}</td><td><span class="file-status ${escapeHTML(run.status)}">${escapeHTML(run.status)}</span></td><td>${escapeHTML(formatDate(run.started_at))}</td><td>${Number.isFinite(duration) ? `${duration}s` : '—'}</td><td><button class="table-action" data-execution-details="${escapeHTML(run.execution_id)}" aria-label="View ${escapeHTML(run.workflow_name)} execution details"><i class="bi bi-arrow-up-right"></i></button></td></tr>`
+        return `<tr><td><input type="checkbox" data-select-execution="${escapeHTML(run.execution_id)}" aria-label="Select execution for ${escapeHTML(run.workflow_name)}" ${selectedExecutionIds.has(run.execution_id) ? 'checked' : ''} ${run.status === 'running' ? 'disabled' : ''} /></td><td>${escapeHTML(run.workflow_name)}</td><td><span class="file-status ${escapeHTML(run.status)}">${escapeHTML(run.status)}</span></td><td>${escapeHTML(formatDate(run.started_at))}</td><td>${Number.isFinite(duration) ? `${duration}s` : '—'}</td><td><button class="table-action" data-execution-details="${escapeHTML(run.execution_id)}" aria-label="View ${escapeHTML(run.workflow_name)} execution details"><i class="bi bi-arrow-up-right"></i></button><button class="table-action danger-action" data-delete-execution="${escapeHTML(run.execution_id)}" aria-label="Delete execution for ${escapeHTML(run.workflow_name)}" title="Delete history record" ${run.status === 'running' ? 'disabled' : ''}><i class="bi bi-trash3"></i></button></td></tr>`
       }).join('')
-      : '<tr><td class="table-empty" colspan="5">No workflow executions match this view.</td></tr>'
+      : '<tr><td class="table-empty" colspan="6">No workflow executions match this view.</td></tr>'
+    updateSelectionControls('history', runs.filter((run) => run.status !== 'running'))
   } catch (error) {
     showToast(error.message || 'Could not load execution history.', 'error')
   }
@@ -500,6 +571,11 @@ export function initOperations() {
   })
   document.getElementById('execution-status').addEventListener('change', loadHistory)
   document.getElementById('execution-table-body').addEventListener('click', async (event) => {
+    const deleteButton = event.target.closest('[data-delete-execution]')
+    if (deleteButton) {
+      try { await deleteHistory([deleteButton.dataset.deleteExecution], 'single') } catch (error) { showToast(error.message || 'Execution could not be deleted.', 'error') }
+      return
+    }
     const button = event.target.closest('[data-execution-details]')
     if (!button) return
     try {
@@ -509,6 +585,44 @@ export function initOperations() {
       showToast(error.message || 'Could not load execution details.', 'error')
     }
   })
+  document.getElementById('processed-table-body').addEventListener('change', (event) => {
+    const checkbox = event.target.closest('[data-select-processed]')
+    if (!checkbox) return
+    if (checkbox.checked) selectedProcessedIds.add(checkbox.dataset.selectProcessed)
+    else selectedProcessedIds.delete(checkbox.dataset.selectProcessed)
+    updateSelectionControls('processed', Array.from(document.querySelectorAll('[data-select-processed]')).map((input) => ({ file_id: input.dataset.selectProcessed })))
+  })
+  document.getElementById('processed-table-body').addEventListener('click', (event) => {
+    const button = event.target.closest('[data-delete-processed]')
+    if (button) deleteProcessed([button.dataset.deleteProcessed], 'single').catch((error) => showToast(error.message || 'Dataset could not be deleted.', 'error'))
+  })
+  document.getElementById('processed-select-all').addEventListener('change', (event) => {
+    document.querySelectorAll('[data-select-processed]').forEach((input) => {
+      if (event.target.checked) selectedProcessedIds.add(input.dataset.selectProcessed)
+      else selectedProcessedIds.delete(input.dataset.selectProcessed)
+      input.checked = event.target.checked
+    })
+    updateSelectionControls('processed', Array.from(document.querySelectorAll('[data-select-processed]')).map((input) => ({ file_id: input.dataset.selectProcessed })))
+  })
+  document.getElementById('processed-delete-selected').addEventListener('click', () => deleteProcessed([...selectedProcessedIds]).catch((error) => showToast(error.message || 'Selected datasets could not be deleted.', 'error')))
+  document.getElementById('processed-clear-all').addEventListener('click', () => deleteProcessed([], 'clear').catch((error) => showToast(error.message || 'Processed datasets could not be cleared.', 'error')))
+  document.getElementById('execution-table-body').addEventListener('change', (event) => {
+    const checkbox = event.target.closest('[data-select-execution]')
+    if (!checkbox) return
+    if (checkbox.checked) selectedExecutionIds.add(checkbox.dataset.selectExecution)
+    else selectedExecutionIds.delete(checkbox.dataset.selectExecution)
+    updateSelectionControls('history', Array.from(document.querySelectorAll('[data-select-execution]:not(:disabled)')).map((input) => ({ execution_id: input.dataset.selectExecution })))
+  })
+  document.getElementById('history-select-all').addEventListener('change', (event) => {
+    document.querySelectorAll('[data-select-execution]:not(:disabled)').forEach((input) => {
+      if (event.target.checked) selectedExecutionIds.add(input.dataset.selectExecution)
+      else selectedExecutionIds.delete(input.dataset.selectExecution)
+      input.checked = event.target.checked
+    })
+    updateSelectionControls('history', Array.from(document.querySelectorAll('[data-select-execution]:not(:disabled)')).map((input) => ({ execution_id: input.dataset.selectExecution })))
+  })
+  document.getElementById('history-delete-selected').addEventListener('click', () => deleteHistory([...selectedExecutionIds]).catch((error) => showToast(error.message || 'Selected history could not be deleted.', 'error')))
+  document.getElementById('history-clear-all').addEventListener('click', () => deleteHistory([], 'clear').catch((error) => showToast(error.message || 'Execution history could not be cleared.', 'error')))
   window.addEventListener('app:pagechange', async (event) => {
     if (event.detail.page === 'processed') await loadProcessed()
     if (event.detail.page === 'history') await loadHistory()

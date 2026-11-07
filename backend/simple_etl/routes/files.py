@@ -20,6 +20,77 @@ files_blueprint = Blueprint("files", __name__)
 PREVIEW_ROW_LIMIT = 100
 CLEANING_PREVIEW_ROW_LIMIT = 50
 MAX_CLEANING_STEPS = 20
+MAX_BULK_DELETE = 500
+
+
+def _dataset_path(storage, record):
+    file_id = record.get("file_id")
+    extension = f".{record.get('file_type', '')}"
+    if record.get("status") == "processed":
+        return storage.processed_path(file_id, extension), storage.processed_dir
+    if record.get("status") == "uploaded":
+        return storage.upload_path(file_id, extension), storage.uploads_dir
+    raise ValueError("Only uploaded or processed datasets can be deleted.")
+
+
+def _delete_dataset(storage, metadata, record):
+    path, managed_dir = _dataset_path(storage, record)
+    staged = storage.stage_managed_delete(path, managed_dir)
+    try:
+        metadata.delete_file(record["file_id"])
+    except Exception:
+        if staged:
+            storage.restore_managed_delete(staged, path, managed_dir)
+        raise
+    if staged:
+        try:
+            storage.finalize_managed_delete(staged, managed_dir)
+        except OSError:
+            metadata.save_file(record)
+            storage.restore_managed_delete(staged, path, managed_dir)
+            raise
+    return {"file_id": record["file_id"], "physical_file_missing": staged is None}
+
+
+def _validate_delete_ids(payload):
+    ids = payload.get("file_ids", payload.get("dataset_ids")) if isinstance(payload, dict) else None
+    if not isinstance(ids, list) or not ids or len(ids) > MAX_BULK_DELETE:
+        return None, "Select between 1 and 500 datasets to delete."
+    if any(not isinstance(file_id, str) or not file_id for file_id in ids):
+        return None, "Every dataset identifier must be a non-empty string."
+    return list(dict.fromkeys(ids)), None
+
+
+def _bulk_delete_datasets(storage, metadata, ids, status, confirm_dependencies):
+    records = metadata.list_files()
+    current = {record["file_id"]: record for record in records if record.get("file_id") in ids}
+    eligible_ids = {file_id for file_id, record in current.items() if record.get("status") == status}
+    dependencies = metadata.dataset_dependencies(eligible_ids)
+    referenced = {file_id: value for file_id, value in dependencies.items() if value["workflows"] or value["dashboards"]}
+    if referenced and not confirm_dependencies:
+        return jsonify({
+            "error": "Some datasets are referenced by saved dashboards or workflows.",
+            "dependencies": referenced,
+        }), 409
+
+    deleted = []
+    failed = []
+    for file_id in ids:
+        record = current.get(file_id)
+        if not record:
+            failed.append({"file_id": file_id, "error": "Dataset not found."})
+            continue
+        if record.get("status") != status:
+            failed.append({"file_id": file_id, "error": f"Dataset is not {status}."})
+            continue
+        try:
+            outcome = _delete_dataset(storage, metadata, record)
+            deleted.append(outcome)
+            current_app.logger.info("Deleted %s dataset %s", status, file_id)
+        except (OSError, RuntimeError, ValueError) as exc:
+            current_app.logger.exception("Dataset deletion failed for %s", file_id)
+            failed.append({"file_id": file_id, "error": str(exc) or "Dataset could not be deleted."})
+    return jsonify({"deleted": deleted, "failed": failed, "deleted_count": len(deleted), "partial": bool(failed)}), 200
 
 
 def _display_value(value):
@@ -384,17 +455,92 @@ def download_file(file_id: str):
 def delete_file(file_id: str):
     storage = current_app.extensions["etl_storage"]
     metadata = MetadataService(storage)
+    if not storage.file_id_is_valid(file_id):
+        return jsonify({"error": "Dataset identifier is invalid."}), 400
     record = metadata.get_file(file_id)
     if record is None:
         return jsonify({"error": "File not found."}), 404
-    extension = f".{record.get('file_type', '')}"
+    dependencies = metadata.dataset_dependencies({file_id})[file_id]
+    if (dependencies["workflows"] or dependencies["dashboards"]) and request.args.get("confirm_dependencies") != "true":
+        return jsonify({
+            "error": "This dataset is referenced by saved dashboards or workflows.",
+            "dependencies": {file_id: dependencies},
+        }), 409
     try:
-        if record.get("status") == "processed":
-            storage.delete_processed(file_id, extension)
-        else:
-            storage.delete_upload(file_id, extension)
-        metadata.delete_file(file_id)
+        result = _delete_dataset(storage, metadata, record)
     except (OSError, RuntimeError, ValueError) as exc:
-        current_app.logger.exception("Dataset deletion failed: %s", exc)
-        return jsonify({"error": "The dataset could not be deleted."}), 500
-    return jsonify({"deleted": True, "file_id": file_id})
+        current_app.logger.exception("Dataset deletion failed for %s", file_id)
+        return jsonify({"error": str(exc) or "The dataset could not be deleted."}), 500
+    current_app.logger.info("Deleted dataset %s", file_id)
+    return jsonify({"deleted": True, **result})
+
+
+def _delete_selected(status: str, clear: bool = False):
+    storage = current_app.extensions["etl_storage"]
+    metadata = MetadataService(storage)
+    if clear:
+        ids = [record["file_id"] for record in metadata.list_files() if record.get("status") == status]
+    else:
+        ids, error = _validate_delete_ids(request.get_json(silent=True) or {})
+        if error:
+            return jsonify({"error": error}), 400
+    invalid = [file_id for file_id in ids if not storage.file_id_is_valid(file_id)]
+    if invalid:
+        return jsonify({"error": "One or more dataset identifiers are invalid.", "invalid_ids": invalid}), 400
+    confirmed = (
+        request.args.get("confirm_dependencies") == "true"
+        if clear else (request.get_json(silent=True) or {}).get("confirm_dependencies") is True
+    )
+    response, status_code = _bulk_delete_datasets(storage, metadata, ids, status, confirmed)
+    if status_code != 200:
+        return response, status_code
+    result = response.get_json()
+    if result["deleted_count"]:
+        current_app.logger.info("Deleted %s %s dataset(s)", result["deleted_count"], status)
+    return response
+
+
+@files_blueprint.delete("/processed/<file_id>")
+def delete_processed_file(file_id: str):
+    storage = current_app.extensions["etl_storage"]
+    metadata = MetadataService(storage)
+    if not storage.file_id_is_valid(file_id):
+        return jsonify({"error": "Dataset identifier is invalid."}), 400
+    record = metadata.get_file(file_id)
+    if record is None:
+        return jsonify({"error": "Processed dataset not found."}), 404
+    if record.get("status") != "processed":
+        return jsonify({"error": "Dataset is not processed."}), 409
+    dependencies = metadata.dataset_dependencies({file_id})[file_id]
+    if (dependencies["workflows"] or dependencies["dashboards"]) and request.args.get("confirm_dependencies") != "true":
+        return jsonify({
+            "error": "This dataset is referenced by saved dashboards or workflows.",
+            "dependencies": {file_id: dependencies},
+        }), 409
+    try:
+        result = _delete_dataset(storage, metadata, record)
+    except (OSError, RuntimeError, ValueError) as exc:
+        current_app.logger.exception("Processed dataset deletion failed for %s", file_id)
+        return jsonify({"error": str(exc) or "The processed dataset could not be deleted."}), 500
+    current_app.logger.info("Deleted processed dataset %s", file_id)
+    return jsonify({"deleted": True, **result})
+
+
+@files_blueprint.post("/processed/delete-selected")
+def delete_selected_processed_files():
+    return _delete_selected("processed")
+
+
+@files_blueprint.delete("/processed/clear")
+def clear_processed_files():
+    return _delete_selected("processed", clear=True)
+
+
+@files_blueprint.post("/files/delete-selected")
+def delete_selected_uploaded_files():
+    return _delete_selected("uploaded")
+
+
+@files_blueprint.delete("/files/clear")
+def clear_uploaded_files():
+    return _delete_selected("uploaded", clear=True)

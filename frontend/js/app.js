@@ -35,6 +35,60 @@ export function showToast(message, type = 'success') {
   window.setTimeout(() => toast.remove(), 3900)
 }
 
+export function confirmPermanentDelete(itemType, count, dependencies = null) {
+  const dialog = document.getElementById('delete-confirm-dialog')
+  const dependencyPanel = document.getElementById('delete-confirm-dependencies')
+  const dependencyList = document.getElementById('delete-confirm-dependency-list')
+  const noun = count === 1
+    ? itemType.replace(/s$/, '')
+    : itemType.endsWith('y') ? `${itemType.slice(0, -1)}ies` : `${itemType}s`
+  document.getElementById('delete-confirm-summary').textContent = `Permanently delete ${count} ${noun}? This action cannot be undone.`
+  dependencyList.replaceChildren()
+  const labels = new Set()
+  for (const reference of Object.values(dependencies || {})) {
+    for (const workflow of reference.workflows || []) labels.add(`Workflow: ${workflow.name}`)
+    for (const dashboard of reference.dashboards || []) labels.add(`Dashboard: ${dashboard.name}`)
+  }
+  for (const label of labels) {
+    const item = document.createElement('li')
+    item.textContent = label
+    dependencyList.append(item)
+  }
+  dependencyPanel.hidden = labels.size === 0
+  return new Promise((resolve) => {
+    const confirmButton = document.getElementById('delete-confirm-accept')
+    const cancelButton = document.getElementById('delete-confirm-cancel')
+    const confirm = () => dialog.close('delete')
+    const cancel = () => dialog.close('cancel')
+    const handleCancel = (event) => {
+      event.preventDefault()
+      dialog.close('cancel')
+    }
+    const finish = () => {
+      confirmButton.removeEventListener('click', confirm)
+      cancelButton.removeEventListener('click', cancel)
+      dialog.removeEventListener('cancel', handleCancel)
+      resolve(dialog.returnValue === 'delete')
+    }
+    dialog.addEventListener('close', finish, { once: true })
+    confirmButton.addEventListener('click', confirm)
+    cancelButton.addEventListener('click', cancel)
+    dialog.addEventListener('cancel', handleCancel)
+    dialog.showModal()
+  })
+}
+
+export async function deleteWithConfirmation({ url, options, itemType, count, confirmedUrl = url, confirmedOptions = options }) {
+  if (!await confirmPermanentDelete(itemType, count)) return null
+  try {
+    return await api(url, options)
+  } catch (error) {
+    if (!error.payload?.dependencies) throw error
+    if (!await confirmPermanentDelete(itemType, count, error.payload.dependencies)) return null
+    return api(confirmedUrl, confirmedOptions)
+  }
+}
+
 export function switchPage(page) {
   const target = document.getElementById(`page-${page}`)
   if (!target) return

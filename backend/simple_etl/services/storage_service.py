@@ -63,16 +63,18 @@ class FileSystemStorage:
     def upload_path(self, file_id: str, extension: str) -> Path:
         if not self.file_id_is_valid(file_id) or extension not in {".csv", ".xlsx", ".json"}:
             raise ValueError("Invalid stored file identifier.")
-        path = (self.uploads_dir / f"{file_id}{extension}").resolve()
-        if path.parent != self.uploads_dir.resolve():
+        candidate = self.uploads_dir / f"{file_id}{extension}"
+        path = candidate.resolve()
+        if path.parent != self.uploads_dir.resolve() or path != candidate:
             raise ValueError("Invalid stored file location.")
         return path
 
     def processed_path(self, file_id: str, extension: str) -> Path:
         if not self.file_id_is_valid(file_id) or extension not in {".csv", ".xlsx", ".json"}:
             raise ValueError("Invalid processed file identifier.")
-        path = (self.processed_dir / f"{file_id}{extension}").resolve()
-        if path.parent != self.processed_dir.resolve():
+        candidate = self.processed_dir / f"{file_id}{extension}"
+        path = candidate.resolve()
+        if path.parent != self.processed_dir.resolve() or path != candidate:
             raise ValueError("Invalid processed file location.")
         return path
 
@@ -117,3 +119,50 @@ class FileSystemStorage:
             return False
         path.unlink()
         return True
+
+    def stage_managed_delete(self, path: Path, managed_dir: Path) -> Path | None:
+        root = managed_dir.resolve()
+        source = path.resolve()
+        if source.parent != root:
+            raise ValueError("File is outside its managed storage directory.")
+        if not source.exists():
+            return None
+        staged = root / f".{source.name}.{uuid.uuid4().hex}.deleting"
+        os.replace(source, staged)
+        return staged
+
+    def restore_managed_delete(self, staged: Path, destination: Path, managed_dir: Path) -> None:
+        root = managed_dir.resolve()
+        staged_path = staged.resolve()
+        destination_path = destination.resolve()
+        if staged_path.parent != root or destination_path.parent != root:
+            raise ValueError("Staged file is outside its managed storage directory.")
+        if staged_path.exists():
+            os.replace(staged_path, destination_path)
+
+    def finalize_managed_delete(self, staged: Path, managed_dir: Path) -> None:
+        root = managed_dir.resolve()
+        staged_path = staged.resolve()
+        if staged_path.parent != root:
+            raise ValueError("Staged file is outside its managed storage directory.")
+        staged_path.unlink(missing_ok=True)
+
+    def delete_execution_artifacts(self, execution_id: str) -> dict[str, list[str]]:
+        if not self.file_id_is_valid(execution_id):
+            raise ValueError("Invalid execution identifier.")
+        candidates = [
+            (self.previews_dir, re.compile(rf"^{re.escape(execution_id)}_[a-f0-9]{{64}}\.json$")),
+            (self.logs_dir, re.compile(rf"^execution-{re.escape(execution_id)}\.log(?:\.\d+)?$")),
+        ]
+        result = {"deleted": [], "failed": []}
+        for directory, pattern in candidates:
+            root = directory.resolve()
+            for path in directory.iterdir():
+                if not pattern.fullmatch(path.name) or path.resolve().parent != root or not path.is_file():
+                    continue
+                try:
+                    path.unlink()
+                    result["deleted"].append(str(path.relative_to(self.root)))
+                except OSError as exc:
+                    result["failed"].append(f"{path.name}: {exc}")
+        return result

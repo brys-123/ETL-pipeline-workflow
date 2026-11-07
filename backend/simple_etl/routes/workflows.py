@@ -267,6 +267,76 @@ def get_execution(execution_id: str):
     return jsonify(execution)
 
 
+def _delete_execution_records(execution_ids: list[str]):
+    storage = current_app.extensions["etl_storage"]
+    metadata = MetadataService(storage)
+    if any(not storage.file_id_is_valid(execution_id) for execution_id in execution_ids):
+        return jsonify({"error": "One or more execution identifiers are invalid."}), 400
+    current = {item.get("execution_id"): item for item in metadata.list_executions()}
+    deleted = []
+    failed = []
+    for execution_id in dict.fromkeys(execution_ids):
+        execution = current.get(execution_id)
+        if execution is None:
+            failed.append({"execution_id": execution_id, "error": "Execution not found."})
+            continue
+        if execution.get("status") == "running":
+            failed.append({"execution_id": execution_id, "error": "A running execution cannot be deleted."})
+            continue
+        try:
+            metadata.delete_executions({execution_id})
+        except (OSError, RuntimeError, ValueError) as exc:
+            current_app.logger.exception("Execution history deletion failed for %s", execution_id)
+            failed.append({"execution_id": execution_id, "error": str(exc) or "Execution history could not be deleted."})
+            continue
+        artifacts = storage.delete_execution_artifacts(execution_id)
+        deleted.append({
+            "execution_id": execution_id,
+            "artifacts_deleted": artifacts["deleted"],
+            "artifact_failures": artifacts["failed"],
+        })
+        current_app.logger.info("Deleted execution history %s", execution_id)
+    return jsonify({"deleted": deleted, "failed": failed, "deleted_count": len(deleted), "partial": bool(failed) or any(item["artifact_failures"] for item in deleted)}), 200
+
+
+@workflows_blueprint.delete("/executions/<execution_id>")
+def delete_execution(execution_id: str):
+    if not current_app.extensions["etl_storage"].file_id_is_valid(execution_id):
+        return jsonify({"error": "Execution identifier is invalid."}), 400
+    response, status_code = _delete_execution_records([execution_id])
+    if status_code != 200:
+        return response, status_code
+    result = response.get_json()
+    if not result["deleted"]:
+        failure = result["failed"][0]
+        return jsonify({"error": failure["error"]}), (409 if "running execution" in failure["error"] else 404)
+    if result["deleted"][0]["artifact_failures"]:
+        return jsonify({
+            "deleted": True,
+            "partial": True,
+            **result["deleted"][0],
+            "warning": "History was deleted, but some execution artifacts could not be removed.",
+        })
+    return jsonify({"deleted": True, **result["deleted"][0]})
+
+
+@workflows_blueprint.post("/executions/delete-selected")
+def delete_selected_executions():
+    payload = request.get_json(silent=True) or {}
+    execution_ids = payload.get("execution_ids")
+    if not isinstance(execution_ids, list) or not execution_ids or len(execution_ids) > 500:
+        return jsonify({"error": "Select between 1 and 500 executions to delete."}), 400
+    if any(not isinstance(execution_id, str) or not execution_id for execution_id in execution_ids):
+        return jsonify({"error": "Every execution identifier must be a non-empty string."}), 400
+    return _delete_execution_records(execution_ids)
+
+
+@workflows_blueprint.delete("/executions/clear")
+def clear_executions():
+    metadata = MetadataService(current_app.extensions["etl_storage"])
+    return _delete_execution_records([item.get("execution_id", "") for item in metadata.list_executions()])
+
+
 def _execution_node_preview(storage, execution: dict, node_id: str, page_size: int = 100):
     status = execution.get("node_statuses", {}).get(node_id)
     if status is None:
