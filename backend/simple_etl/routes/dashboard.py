@@ -12,7 +12,12 @@ def dashboard_stats():
     workflows = metadata.list_workflows()
     executions = metadata.list_executions()
     activity = [
-        {"type": "file", "label": "Dataset uploaded", "name": item["filename"], "timestamp": item["uploaded_at"]}
+        {
+            "type": "file",
+            "label": "Dataset processed" if item.get("status") == "processed" else "Dataset uploaded",
+            "name": item["filename"],
+            "timestamp": item["uploaded_at"],
+        }
         for item in files
     ] + [
         {"type": "workflow", "label": "Workflow saved", "name": item["name"], "timestamp": item["updated_at"]}
@@ -20,7 +25,7 @@ def dashboard_stats():
     ]
     activity.sort(key=lambda item: item["timestamp"], reverse=True)
     return jsonify({
-        "total_uploaded_files": len(files),
+        "total_uploaded_files": sum(item.get("status") == "uploaded" for item in files),
         "processed_datasets": sum(item.get("status") == "processed" for item in files),
         "saved_workflows": len(workflows),
         "completed_executions": sum(item.get("status") == "completed" for item in executions),

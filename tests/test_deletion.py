@@ -305,3 +305,56 @@ def test_history_reports_artifact_cleanup_failure(deletion_client, monkeypatch):
     assert response.json["partial"] is True
     assert response.json["artifact_failures"] == ["preview.json: simulated unlink failure"]
     assert metadata.get_execution(execution_id) is None
+
+
+def test_workflow_deletion_preserves_execution_history_and_processed_datasets(deletion_client):
+    client, storage = deletion_client
+    metadata = MetadataService(storage)
+    workflow_id = storage.new_id()
+    execution_id = storage.new_id()
+    dataset = _processed(storage, "retained-output.csv")
+    metadata.save_workflow({
+        "workflow_id": workflow_id,
+        "name": "Workflow with history",
+        "nodes": [],
+        "edges": [],
+    })
+    metadata.save_execution({
+        "execution_id": execution_id,
+        "workflow_id": workflow_id,
+        "workflow_name": "Workflow with history",
+        "started_at": "2026-01-01T00:00:00+00:00",
+        "status": "completed",
+        "output_file_ids": [dataset["file_id"]],
+        "node_statuses": {},
+    })
+
+    deleted = client.delete(f"/api/workflows/{workflow_id}")
+
+    assert deleted.status_code == 200, deleted.json
+    assert deleted.json["executions_preserved"] == 1
+    assert metadata.get_workflow(workflow_id) is None
+    assert metadata.get_execution(execution_id) is not None
+    assert metadata.get_file(dataset["file_id"]) is not None
+    assert storage.processed_path(dataset["file_id"], ".csv").is_file()
+
+
+def test_dashboard_bulk_deletion_keeps_referenced_datasets(deletion_client):
+    client, storage = deletion_client
+    metadata = MetadataService(storage)
+    dataset = _processed(storage, "dashboard-source.csv")
+    dashboard_ids = [storage.new_id(), storage.new_id()]
+    for index, dashboard_id in enumerate(dashboard_ids):
+        metadata.save_dashboard({
+            "dashboard_id": dashboard_id,
+            "name": f"Dashboard {index}",
+            "dataset_id": dataset["file_id"],
+        })
+
+    deleted = client.post("/api/dashboards/delete-selected", json={"dashboard_ids": dashboard_ids})
+
+    assert deleted.status_code == 200, deleted.json
+    assert deleted.json["deleted_count"] == 2
+    assert all(metadata.get_dashboard(dashboard_id) is None for dashboard_id in dashboard_ids)
+    assert metadata.get_file(dataset["file_id"]) is not None
+    assert storage.processed_path(dataset["file_id"], ".csv").is_file()

@@ -397,6 +397,107 @@
   background: linear-gradient(135deg, var(--builder-white), var(--builder-tint));
 }
 
+.focus-toolbar { display: none; }
+body.workflow-focus-mode { overflow: hidden; }
+body.workflow-focus-mode .sidebar,
+body.workflow-focus-mode .topbar { display: none !important; }
+body.workflow-focus-mode .main-panel { width: 100%; margin: 0; padding: 0; }
+body.workflow-focus-mode .page-container { max-width: none; height: 100vh; padding: 0; }
+body.workflow-focus-mode #page-workflow {
+  position: fixed;
+  inset: 0;
+  z-index: 9990;
+  display: block !important;
+  height: 100dvh;
+  overflow: hidden;
+  padding: 0;
+  background: #eaf6ee;
+}
+body.workflow-focus-mode .workflow-header,
+body.workflow-focus-mode #workflow-run-feedback { display: none !important; }
+body.workflow-focus-mode #workflow-focus-toolbar { display: flex; }
+body.workflow-focus-mode .builder-shell {
+  position: absolute;
+  inset: 64px 10px 10px;
+  display: block;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  margin: 0;
+}
+body.workflow-focus-mode .node-panel,
+body.workflow-focus-mode .config-column { display: none !important; }
+body.workflow-focus-mode .canvas-column {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border-radius: 12px;
+}
+body.workflow-focus-mode .canvas-viewport { height: calc(100% - 46px); min-height: 0; }
+body.workflow-focus-mode .workflow-node { width: 188px; min-height: 74px; padding: 9px 10px; }
+body.workflow-focus-mode .workflow-node .node-card-copy small { display: none; }
+body.workflow-focus-mode .workflow-node .node-card-copy strong { font-size: 11px; }
+body.workflow-focus-mode .workflow-node .node-type-icon { width: 29px; height: 29px; }
+body.workflow-focus-mode .canvas-minimap { right: 12px; bottom: 12px; }
+.focus-toolbar {
+  position: fixed;
+  top: 10px;
+  left: 50%;
+  z-index: 10020;
+  width: max-content;
+  max-width: calc(100vw - 20px);
+  min-height: 44px;
+  display: none;
+  align-items: center;
+  gap: 5px;
+  padding: 5px;
+  overflow-x: auto;
+  border: 1px solid #b7d9c2;
+  border-radius: 11px;
+  background: rgba(255,255,255,.97);
+  box-shadow: 0 8px 26px rgba(23,77,53,.2);
+  transform: translateX(-50%);
+}
+.focus-toolbar > button {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 9px;
+  border: 1px solid #d5ebdd;
+  border-radius: 7px;
+  color: #174d35;
+  background: linear-gradient(135deg,#fff,#f1f8f3);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.focus-toolbar > button:hover { border-color: #43b97a; background: #eaf6ee; }
+.focus-toolbar > button.focus-exit,
+.focus-toolbar > button[id$="-save"],
+.focus-toolbar > button[id$="-run"] { color: #fff; background: linear-gradient(135deg,#174d35,#269b65); }
+.focus-toolbar input,
+.focus-toolbar select {
+  height: 32px;
+  max-width: 190px;
+  padding: 0 8px;
+  border: 1px solid #d5ebdd;
+  border-radius: 7px;
+  color: #174d35;
+  background: #fff;
+  font: inherit;
+  font-size: 10px;
+}
+body.workflow-focus-mode .focus-toolbar { display: flex; }
+@media (max-width: 760px) {
+  .focus-toolbar { top: 6px; gap: 3px; max-width: calc(100vw - 12px); }
+  .focus-toolbar > button { padding: 0 7px; }
+  body.workflow-focus-mode .builder-shell { inset: 58px 5px 5px; }
+  body.workflow-focus-mode .canvas-controls { display: none; }
+}
+
 #page-workflow .canvas-toolbar {
   min-height: 46px;
   height: auto;

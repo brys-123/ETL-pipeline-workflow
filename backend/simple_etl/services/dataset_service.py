@@ -128,12 +128,18 @@ class DatasetService:
         page: int = 1,
         page_size: int = 100,
         query: str = "",
+        filter_column: str | None = None,
+        filter_value: Any = None,
     ) -> dict[str, Any]:
         if page < 1:
             raise ValueError("Page must be a positive integer.")
         if page_size < 1 or page_size > MAX_PREVIEW_PAGE_SIZE:
             raise ValueError(f"Page size must be between 1 and {MAX_PREVIEW_PAGE_SIZE}.")
         frame = self.read(record)
+        if filter_column is not None:
+            if filter_column not in frame.columns:
+                raise ValueError("The requested preview filter is not available.")
+            frame = frame.loc[frame[filter_column] == filter_value]
         if query:
             mask = frame.astype("string").apply(
                 lambda column: column.str.contains(query, case=False, na=False, regex=False)

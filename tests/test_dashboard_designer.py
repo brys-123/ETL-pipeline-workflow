@@ -43,12 +43,24 @@ def test_dashboard_crud_persists_file_backed_json_and_validates_input(tmp_path):
         "name": "  Sales overview  ",
         "widgets": [{"type": "table", "dataset_id": "a" * 32}],
         "layout": {"columns": 2},
+        "components": [{
+            "id": "chart-a",
+            "type": "bar",
+            "position": {"x": 6, "y": 420},
+            "width": 4,
+            "height": 250,
+            "z_index": 3,
+            "layout_section": "sales",
+            "config": {"measure": "amount"},
+        }],
     })
     assert created.status_code == 201, created.json
     dashboard = created.json
     dashboard_id = dashboard["dashboard_id"]
     assert re.fullmatch(r"[a-f0-9]{32}", dashboard_id)
     assert dashboard["name"] == "Sales overview"
+    assert dashboard["components"][0]["position"] == {"x": 6, "y": 420}
+    assert dashboard["components"][0]["z_index"] == 3
     assert json.loads(storage.dashboard_path(dashboard_id).read_text(encoding="utf-8")) == dashboard
 
     fetched = client.get(f"/api/dashboards/{dashboard_id}")

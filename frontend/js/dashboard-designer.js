@@ -1,4 +1,4 @@
-import { api, escapeHTML, showToast } from './app.js'
+import { api, confirmPermanentDelete, escapeHTML, showToast } from './app.js'
 
 const chartTypes = new Set([
   'bar', 'horizontalBar', 'line', 'area', 'pie', 'donut', 'scatter', 'bubble',
@@ -19,7 +19,27 @@ const dataLabelChartTypes = new Set([
   'bar', 'horizontalBar', 'stackedBar', 'percentStackedBar', 'line', 'area',
   'pie', 'donut', 'histogram', 'radar', 'treemap', 'funnel', 'waterfall', 'heatmap',
 ])
-const palette = ['#174D35', '#206B48', '#26885B', '#34A36B', '#4EBA7E', '#76C996', '#A5DDB8']
+const chartPalettes = {
+  forest: ['#174D35', '#206B48', '#26885B', '#34A36B', '#4EBA7E', '#76C996', '#A5DDB8'],
+  mint: ['#174D35', '#287A55', '#43A978', '#66C795', '#8AD9AD', '#B3E8C8', '#D5F2E0'],
+  monochrome: ['#245B3E', '#38734F', '#4B8A61', '#609F74', '#79B68A', '#95CAA3', '#B8DFC1'],
+}
+const canvasPresets = {
+  'clean-white': { label: 'Clean White', background: '#FFFFFF', cardBackground: '#FFFFFF', textColor: '#174D35', secondaryColor: '#486B55', style: 'solid', padding: 28, gap: 14, radius: 8, shadows: true },
+  'soft-mint': { label: 'Soft Mint', background: '#F1F8F3', cardBackground: '#FFFFFF', textColor: '#174D35', secondaryColor: '#486B55', style: 'soft-gradient', padding: 28, gap: 14, radius: 10, shadows: true },
+  'minimal-light': { label: 'Minimal Light', background: '#F7F9F7', cardBackground: '#FFFFFF', textColor: '#20372A', secondaryColor: '#617568', style: 'solid', padding: 24, gap: 12, radius: 4, shadows: false },
+  'professional-green': { label: 'Professional Green', background: '#EAF3ED', cardBackground: '#FFFFFF', textColor: '#174D35', secondaryColor: '#486B55', style: 'soft-gradient', padding: 30, gap: 16, radius: 12, shadows: true },
+  'dark-analytics': { label: 'Dark Analytics', background: '#122219', cardBackground: '#1A3023', textColor: '#E4F1E8', secondaryColor: '#B4CABB', style: 'solid', padding: 28, gap: 14, radius: 10, shadows: false },
+  'executive-report': { label: 'Executive Report', background: '#F5F8F5', cardBackground: '#FFFFFF', textColor: '#173B2A', secondaryColor: '#52685A', style: 'solid', padding: 36, gap: 18, radius: 6, shadows: false },
+  'modern-glass': { label: 'Modern Glass', background: '#E8F3EC', cardBackground: '#F8FCF9', textColor: '#174D35', secondaryColor: '#486B55', style: 'soft-gradient', padding: 30, gap: 16, radius: 16, shadows: true },
+}
+const canvasDimensions = {
+  standard: [1440, 900],
+  widescreen: [1920, 1080],
+  presentation: [1600, 900],
+  'a4-landscape': [1123, 794],
+  'a4-portrait': [794, 1123],
+}
 const aggregationLabels = {
   sum: 'Sum',
   average: 'Average',
@@ -45,6 +65,7 @@ const labels = {
 const state = {
   dashboard: blankDashboard(), datasets: [], dataset: null, columns: [], schema: [], rows: [],
   charts: new Map(), selectedId: null, saved: [], undo: [], redo: [], rendering: false, filters: {},
+  selectedDashboardIds: new Set(), componentInteraction: null,
 }
 
 function blankDashboard() {
@@ -53,19 +74,82 @@ function blankDashboard() {
     dataset_id: '',
     subtitle: 'Select a dataset and add visualizations to get started.',
     eyebrow: 'DATA INSIGHTS',
-    theme: { accent: '#206B48', surface: '#FFFFFF', text: '#174D35' },
+    theme: { accent: '#206B48', surface: '#FFFFFF', text: '#174D35', secondary: '#486B55', palette: 'forest' },
+    canvas: {
+      preset: 'soft-mint',
+      dimensions: 'standard',
+      width: 1440,
+      height: 900,
+      background: '#F1F8F3',
+      cardBackground: '#FFFFFF',
+      textColor: '#174D35',
+      secondaryColor: '#486B55',
+      style: 'soft-gradient',
+      padding: 28,
+      gap: 14,
+      radius: 10,
+      shadows: true,
+      grid: true,
+      alignment: 'center',
+    },
     components: [],
+  }
+}
+
+function defaultComponentSize(type) {
+  if (type === 'kpi') return { width: 3, height: 125 }
+  if (type === 'table') return { width: 12, height: 320 }
+  if (type === 'pie' || type === 'donut') return { width: 4, height: 250 }
+  if (['text', 'image', 'section', 'filter'].includes(type)) return { width: 6, height: 180 }
+  if (type === 'divider') return { width: 12, height: 80 }
+  return { width: 6, height: 255 }
+}
+
+function findComponentPosition(width, height, placed = state.dashboard.components) {
+  const safeWidth = Math.max(1, Math.min(12, Number(width) || 6))
+  const safeHeight = Math.max(90, Number(height) || 255)
+  const maxY = placed.reduce((maximum, item) => Math.max(maximum, Number(item.position?.y) + Number(item.height || 255)), 0)
+  for (let y = 0; y <= maxY + safeHeight + 20; y += 20) {
+    for (let x = 0; x <= 12 - safeWidth; x += 1) {
+      const overlap = placed.some((item) => {
+        const itemX = Number(item.position?.x) || 0
+        const itemY = Number(item.position?.y) || 0
+        return x < itemX + Number(item.width || 6)
+          && x + safeWidth > itemX
+          && y < itemY + Number(item.height || 255)
+          && y + safeHeight > itemY
+      })
+      if (!overlap) return { x, y }
+    }
+  }
+  return { x: 0, y: maxY + 20 }
+}
+
+function arrangeComponents(components) {
+  const placed = []
+  for (const component of components) {
+    component.position = findComponentPosition(component.width, component.height, placed)
+    component.z_index = placed.length
+    component.layout_section ||= 'main'
+    placed.push(component)
   }
 }
 
 function makeComponent(type, schema = []) {
   const dimension = schema.find((column) => column.kind !== 'numeric')?.name || ''
   const measure = schema.find((column) => column.kind === 'numeric')?.name || ''
+  const size = defaultComponentSize(type)
   return {
     id: crypto.randomUUID(),
     type,
     title: labels[type] || 'Visualization',
-    size: 'medium',
+    width: size.width,
+    height: size.height,
+    position: { x: 0, y: 0 },
+    z_index: state.dashboard.components.length,
+    layout_section: 'main',
+    visible: true,
+    appearance: { background: '', padding: 12, radius: 8, shadow: true, justify: 'stretch', align: 'stretch' },
     config: {
       dimension,
       measure,
@@ -81,6 +165,22 @@ function makeComponent(type, schema = []) {
       decimalPrecision: 1,
       numberFormat: 'standard',
       chartBackground: 'transparent',
+      chartPalette: 'forest',
+      titleSize: 13,
+      axisLabelSize: 9,
+      axisLabelColor: '',
+      gridLineColor: '',
+      barThickness: 28,
+      barSpacing: 35,
+      barRadius: 4,
+      lineThickness: 2.5,
+      showMarkers: true,
+      smooth: true,
+      donutHoleSize: 40,
+      sliceSpacing: 2,
+      areaOpacity: 20,
+      chartPadding: 8,
+      chartBorder: false,
       showLegend: true,
       legendPosition: 'bottom',
       legendOrientation: 'horizontal',
@@ -99,20 +199,52 @@ function makeComponent(type, schema = []) {
 function safeDashboard(value) {
   const dashboard = value?.dashboard || value
   if (!dashboard || typeof dashboard !== 'object') throw new Error('The saved dashboard response is invalid.')
+  const defaults = blankDashboard()
+  const savedCanvas = dashboard.canvas && typeof dashboard.canvas === 'object' ? dashboard.canvas : {}
+  const savedTheme = dashboard.theme && typeof dashboard.theme === 'object' ? dashboard.theme : {}
+  const canvas = {
+    ...defaults.canvas,
+    ...savedCanvas,
+    cardBackground: savedCanvas.cardBackground || savedTheme.surface || defaults.canvas.cardBackground,
+    textColor: savedCanvas.textColor || savedTheme.text || defaults.canvas.textColor,
+    secondaryColor: savedCanvas.secondaryColor || savedTheme.secondary || defaults.canvas.secondaryColor,
+  }
+  const savedComponents = Array.isArray(dashboard.components) ? dashboard.components : []
+  const legacyGridLayout = savedComponents.every((component, index) => (
+    !component.position || typeof component.position !== 'object'
+      || (Number(component.position.x) === 0 && Number(component.position.y) === index)
+  ))
+  const components = savedComponents.map((component, index) => {
+    const componentDefaults = makeComponent(component.type || 'bar')
+    const size = defaultComponentSize(component.type || 'bar')
+    const legacySize = component.size === 'small'
+      ? { width: 4, height: 240 }
+      : component.size === 'large' ? { width: 12, height: 390 } : size
+    const width = Math.max(1, Math.min(12, Number(component.width ?? legacySize.width) || legacySize.width))
+    return {
+      ...componentDefaults,
+      ...component,
+      width,
+      height: Math.max(90, Math.min(1200, Number(component.height ?? legacySize.height) || legacySize.height)),
+      z_index: Number.isFinite(Number(component.z_index)) ? Number(component.z_index) : index,
+      layout_section: typeof component.layout_section === 'string' ? component.layout_section : 'main',
+      position: {
+        x: Math.max(0, Math.min(12 - width, Math.round(Number(component.position?.x) || 0))),
+        y: Math.max(0, Math.min(100_000, Math.round(Number(component.position?.y) || 0))),
+      },
+      appearance: { ...componentDefaults.appearance, ...(component.appearance || {}) },
+      config: { ...componentDefaults.config, ...(component.config || {}) },
+    }
+  })
+  if (legacyGridLayout) arrangeComponents(components)
   return {
-    ...blankDashboard(),
+    ...defaults,
     ...dashboard,
     id: dashboard.id || dashboard.dashboard_id,
     name: dashboard.name || 'Untitled dashboard',
-    theme: { ...blankDashboard().theme, ...(dashboard.theme || {}) },
-    components: Array.isArray(dashboard.components) ? dashboard.components.map((component) => {
-      const defaults = makeComponent(component.type || 'bar')
-      return {
-        ...defaults,
-        ...component,
-        config: { ...defaults.config, ...(component.config || {}) },
-      }
-    }) : [],
+    theme: { ...defaults.theme, ...savedTheme },
+    canvas,
+    components,
   }
 }
 
@@ -160,6 +292,7 @@ function installDashboard(dashboard) {
   state.filters = {}
   document.getElementById('designer-name').value = state.dashboard.name
   document.getElementById('dashboard-report-title').textContent = state.dashboard.name
+  document.getElementById('dashboard-focus-title').textContent = state.dashboard.name
   document.getElementById('dashboard-report-subtitle').textContent = state.dashboard.subtitle || ''
   renderComponents()
   renderConfig()
@@ -313,7 +446,7 @@ function configField(label, key, value, options = {}) {
   } else if (options.multiline) {
     input = `<textarea id="${id}" data-config-key="${key}" maxlength="3000">${escapeHTML(value || '')}</textarea>`
   } else {
-    input = `<input id="${id}" data-config-key="${key}" type="${options.type || 'text'}" value="${escapeHTML(value ?? '')}"${options.min !== undefined ? ` min="${options.min}"` : ''}${options.max !== undefined ? ` max="${options.max}"` : ''}>`
+    input = `<input id="${id}" data-config-key="${key}" type="${options.type || 'text'}" value="${escapeHTML(value ?? '')}"${options.min !== undefined ? ` min="${options.min}"` : ''}${options.max !== undefined ? ` max="${options.max}"` : ''}${options.step !== undefined ? ` step="${options.step}"` : ''}>`
   }
   return `<label class="designer-config-field">${escapeHTML(label)}${input}</label>`
 }
@@ -338,11 +471,28 @@ function renderConfig() {
         ${configField('Accent green', 'theme-accent', state.dashboard.theme.accent, { choices: [['#174D35', 'Forest'], ['#206B48', 'Deep green'], ['#269B65', 'Emerald'], ['#43B97A', 'Fresh green'], ['#80D6A5', 'Light green']] })}
         ${configField('Surface', 'theme-surface', state.dashboard.theme.surface, { choices: [['#FFFFFF', 'White'], ['#FCFFFD', 'Soft white'], ['#F4FBF6', 'Pale green'], ['#EAF6EE', 'Light green']] })}
         ${configField('Text color', 'theme-text', state.dashboard.theme.text, { choices: [['#174D35', 'Forest green'], ['#206B48', 'Deep green']] })}
+        ${configField('Secondary text', 'theme-secondary', state.dashboard.theme.secondary || '#486B55', { choices: [['#486B55', 'Muted green'], ['#617568', 'Soft gray-green'], ['#B4CABB', 'Light mint']] })}
+        ${configField('Chart palette', 'theme-palette', state.dashboard.theme.palette || 'forest', { choices: [['forest', 'Forest green'], ['mint', 'Soft mint'], ['monochrome', 'Green monochrome']] })}
+        <button type="button" class="designer-action-button" data-open-canvas-settings>Canvas &amp; Appearance</button>
       </section>
-      <section class="designer-config-section"><h3>LAYOUT</h3><p class="designer-config-field">Drag dashboard cards to reorder them. Choose a size in a component's settings.</p><div class="designer-config-actions"><button type="button" data-dashboard-action="clear">Clear components</button></div></section>
+      <section class="designer-config-section"><h3>LAYOUT</h3><p class="designer-config-field">Arrange components in the 12-column grid or use Auto Arrange for a compact starting point.</p><div class="designer-config-actions">
+        <button type="button" data-layout-action="left">Align Left</button><button type="button" data-layout-action="center">Align Center</button><button type="button" data-layout-action="right">Align Right</button>
+        <button type="button" data-layout-action="top">Align Top</button><button type="button" data-layout-action="middle">Align Middle</button><button type="button" data-layout-action="bottom">Align Bottom</button>
+        <button type="button" data-layout-action="distribute-horizontal">Distribute Horizontally</button><button type="button" data-layout-action="distribute-vertical">Distribute Vertically</button>
+        <button type="button" data-layout-action="equal-width">Equalize Width</button><button type="button" data-layout-action="equal-height">Equalize Height</button>
+        <button type="button" data-layout-action="front">Bring to Front</button><button type="button" data-layout-action="back">Send to Back</button>
+        <button type="button" data-dashboard-action="clear">Clear components</button>
+      </div></section>
     `
   } else {
     const { type, config } = component
+    const sectionChoices = [
+      ['main', 'Main section'],
+      ...state.dashboard.components
+        .filter((item) => item.type === 'section' && item.id !== component.id)
+        .map((item) => [item.id, item.title || 'Untitled section']),
+    ]
+    const layoutSectionField = configField('Dashboard section', 'layout-section', component.layout_section || 'main', { choices: sectionChoices })
     let fields = configField('Title', 'title', component.title)
     let dataFields = ''
     if (chartTypes.has(type)) {
@@ -397,9 +547,36 @@ function renderConfig() {
           ${dataLabelChartTypes.has(type) ? configToggle('Show data labels', 'showDataLabels', config.showDataLabels) : ''}
           ${gridLineChartTypes.has(type) ? configToggle('Show grid lines', 'showGridLines', config.showGridLines !== false) : ''}
           ${configToggle('Show tooltips', 'showTooltips', config.showTooltips !== false)}
-          ${configField('Chart background', 'chartBackground', config.chartBackground || 'transparent', { choices: [['transparent', 'Transparent'], ['#FFFFFF', 'White'], ['#F4FBF6', 'Pale mint']] })}
-          ${configField('Chart size', 'size', component.size || 'medium', { choices: [['small', 'Compact'], ['medium', 'Standard'], ['large', 'Wide']] })}
+          ${configField('Chart background', 'chartBackground', config.chartBackground === 'transparent' ? '#FFFFFF' : config.chartBackground || '#FFFFFF', { type: 'color' })}
+          ${configField('Chart palette', 'chartPalette', config.chartPalette || 'forest', { choices: [['forest', 'Forest green'], ['mint', 'Soft mint'], ['monochrome', 'Green monochrome']] })}
+          ${configField('Title size (px)', 'titleSize', config.titleSize ?? 13, { type: 'number', min: 9, max: 24 })}
+          ${configField('Axis label size (px)', 'axisLabelSize', config.axisLabelSize ?? 9, { type: 'number', min: 7, max: 16 })}
+          ${configField('Axis label color', 'axisLabelColor', config.axisLabelColor || '#486B55', { type: 'color' })}
+          ${configField('Gridline color', 'gridLineColor', config.gridLineColor || '#EAF6EE', { type: 'color' })}
+          ${configField('Tooltip style', 'tooltipStyle', config.tooltipStyle || 'canvas', { choices: [['canvas', 'Canvas theme'], ['dark', 'Dark green']] })}
+          ${configField('Internal padding (px)', 'chartPadding', config.chartPadding ?? 8, { type: 'number', min: 0, max: 40 })}
+          ${configToggle('Chart border', 'chartBorder', config.chartBorder === true)}
         </section>
+        <section class="designer-config-section"><h3>CHART DIMENSIONS</h3>
+          ${layoutSectionField}
+          ${configField('Horizontal position (grid columns)', 'layout-x', component.position.x, { type: 'number', min: 0, max: 11 })}
+          ${configField('Vertical position (px)', 'layout-y', component.position.y, { type: 'number', min: 0, max: 5000, step: 20 })}
+          ${configField('Width (grid columns)', 'width', component.width, { type: 'number', min: 1, max: 12 })}
+          ${configField('Height (px)', 'height', component.height, { type: 'number', min: 110, max: 1000 })}
+          ${configField('Minimum height (px)', 'minHeight', config.minHeight ?? 170, { type: 'number', min: 110, max: 800 })}
+          ${configField('Maximum height (px)', 'maxHeight', config.maxHeight ?? 700, { type: 'number', min: 150, max: 1200 })}
+          ${configToggle('Responsive sizing', 'responsive', config.responsive !== false)}
+        </section>
+        ${['bar', 'horizontalBar', 'stackedBar', 'percentStackedBar', 'histogram'].includes(type) ? `<section class="designer-config-section"><h3>BAR OPTIONS</h3>${configField('Bar thickness (px)', 'barThickness', config.barThickness ?? 28, { type: 'number', min: 8, max: 80 })}${configField('Bar spacing (%)', 'barSpacing', config.barSpacing ?? 35, { type: 'number', min: 0, max: 90 })}${configField('Rounded corners (px)', 'barRadius', config.barRadius ?? 4, { type: 'number', min: 0, max: 24 })}</section>` : ''}
+        ${['line', 'area'].includes(type) ? `<section class="designer-config-section"><h3>LINE OPTIONS</h3>${configField('Line thickness (px)', 'lineThickness', config.lineThickness ?? 2.5, { type: 'number', min: 1, max: 8, step: 0.5 })}${configToggle('Show point markers', 'showMarkers', config.showMarkers !== false)}${configToggle('Smooth line', 'smooth', config.smooth !== false)}${type === 'area' ? configField('Fill transparency (%)', 'areaOpacity', config.areaOpacity ?? 20, { type: 'number', min: 0, max: 100 }) : ''}</section>` : ''}
+        ${['pie', 'donut'].includes(type) ? `<section class="designer-config-section"><h3>PIE &amp; DONUT OPTIONS</h3>${type === 'donut' ? configField('Donut hole size (%)', 'donutHoleSize', config.donutHoleSize ?? 40, { type: 'number', min: 20, max: 70 }) : ''}${configField('Slice spacing (px)', 'sliceSpacing', config.sliceSpacing ?? 2, { type: 'number', min: 0, max: 12 })}</section>` : ''}
+        <section class="designer-config-section"><h3>LAYOUT TOOLS</h3><div class="designer-config-actions">
+          <button type="button" data-layout-action="left">Align Left</button><button type="button" data-layout-action="center">Align Center</button><button type="button" data-layout-action="right">Align Right</button>
+          <button type="button" data-layout-action="top">Align Top</button><button type="button" data-layout-action="middle">Align Middle</button><button type="button" data-layout-action="bottom">Align Bottom</button>
+          <button type="button" data-layout-action="distribute-horizontal">Distribute Horizontally</button><button type="button" data-layout-action="distribute-vertical">Distribute Vertically</button>
+          <button type="button" data-layout-action="equal-width">Equalize Width</button><button type="button" data-layout-action="equal-height">Equalize Height</button>
+          <button type="button" data-layout-action="front">Bring to Front</button><button type="button" data-layout-action="back">Send to Back</button>
+        </div></section>
         <section class="designer-config-section"><h3>DISPLAY OPTIONS</h3>
           ${percentageChartTypes.has(type) ? configToggle('Show percentage labels', 'showPercentage', config.showPercentage) : ''}
           ${percentageChartTypes.has(type) ? configToggle('Show percentage in tooltips', 'showPercentageInTooltip', config.showPercentageInTooltip) : ''}
@@ -411,11 +588,28 @@ function renderConfig() {
             ${configToggle('Show Legend', 'showLegend', config.showLegend !== false)}
             ${configField('Legend position', 'legendPosition', config.legendPosition || 'bottom', { choices: [['top', 'Top'], ['bottom', 'Bottom'], ['left', 'Left'], ['right', 'Right']] })}
             ${configField('Legend orientation', 'legendOrientation', config.legendOrientation || 'horizontal', { choices: [['horizontal', 'Horizontal'], ['vertical', 'Vertical']] })}
-            ${configField('Legend text size', 'legendTextSize', config.legendTextSize ?? 9, { type: 'number', min: 8, max: 18 })}
+            ${configField('Legend text size', 'legendTextSize', config.legendTextSize ?? 9, { type: 'number', min: 8, max: 14 })}
             ${configField('Legend alignment', 'legendAlign', config.legendAlign || 'center', { choices: [['left', 'Left'], ['center', 'Center'], ['right', 'Right']] })}
             ${configField('Legend item spacing', 'legendItemSpacing', config.legendItemSpacing ?? 10, { type: 'number', min: 0, max: 40 })}
           `}
         </section>
+        <section class="designer-config-section"><h3>COMPONENT SIZE</h3>
+          ${configField('Horizontal position (grid columns)', 'layout-x', component.position.x, { type: 'number', min: 0, max: 11 })}
+          ${configField('Vertical position (px)', 'layout-y', component.position.y, { type: 'number', min: 0, max: 5000, step: 20 })}
+          ${configField('Width (grid columns)', 'width', component.width, { type: 'number', min: 1, max: 12 })}
+          ${configField('Height (px)', 'height', component.height, { type: 'number', min: 90, max: 1000 })}
+          ${configField('Card background (optional)', 'appearance-background', component.appearance.background || state.dashboard.canvas.cardBackground, { type: 'color' })}
+          ${configField('Card padding (px)', 'appearance-padding', component.appearance.padding, { type: 'number', min: 0, max: 48 })}
+          ${configField('Corner radius (px)', 'appearance-radius', component.appearance.radius, { type: 'number', min: 0, max: 32 })}
+          ${configToggle('Card shadow', 'appearance-shadow', component.appearance.shadow !== false)}
+        </section>
+        <section class="designer-config-section"><h3>LAYOUT TOOLS</h3><div class="designer-config-actions">
+          <button type="button" data-layout-action="left">Align Left</button><button type="button" data-layout-action="center">Align Center</button><button type="button" data-layout-action="right">Align Right</button>
+          <button type="button" data-layout-action="top">Align Top</button><button type="button" data-layout-action="middle">Align Middle</button><button type="button" data-layout-action="bottom">Align Bottom</button>
+          <button type="button" data-layout-action="distribute-horizontal">Distribute Horizontally</button><button type="button" data-layout-action="distribute-vertical">Distribute Vertically</button>
+          <button type="button" data-layout-action="equal-width">Equalize Width</button><button type="button" data-layout-action="equal-height">Equalize Height</button>
+          <button type="button" data-layout-action="front">Bring to Front</button><button type="button" data-layout-action="back">Send to Back</button>
+        </div></section>
         <section class="designer-config-section"><h3>COMPONENT</h3><div class="designer-config-actions">
           <button type="button" data-component-action="up">Move up</button><button type="button" data-component-action="down">Move down</button>
           <button type="button" data-component-action="duplicate">Duplicate</button><button class="danger" type="button" data-component-action="delete">Delete</button>
@@ -440,7 +634,15 @@ function renderConfig() {
     if (type === 'image') fields += `<label class="designer-config-field">Choose image<input id="config-image" type="file" accept="image/*"></label>`
     content.innerHTML = chartTypes.has(type) ? chartSections : `
       <section class="designer-config-section"><h3>CONTENT</h3>${fields}</section>
-      <section class="designer-config-section"><h3>SIZE</h3>${configField('Card width', 'size', component.size || 'medium', { choices: [['small', 'Small'], ['medium', 'Medium'], ['large', 'Full width']] })}</section>
+      <section class="designer-config-section"><h3>COMPONENT SIZE</h3>
+        ${layoutSectionField}
+        ${configField('Width (grid columns)', 'width', component.width, { type: 'number', min: 1, max: 12 })}
+        ${configField('Height (px)', 'height', component.height, { type: 'number', min: 90, max: 1000 })}
+        ${configField('Card background (optional)', 'appearance-background', component.appearance.background || state.dashboard.canvas.cardBackground, { type: 'color' })}
+        ${configField('Card padding (px)', 'appearance-padding', component.appearance.padding, { type: 'number', min: 0, max: 48 })}
+        ${configField('Corner radius (px)', 'appearance-radius', component.appearance.radius, { type: 'number', min: 0, max: 32 })}
+        ${configToggle('Card shadow', 'appearance-shadow', component.appearance.shadow !== false)}
+      </section>
       <section class="designer-config-section"><h3>COMPONENT</h3><div class="designer-config-actions">
         <button type="button" data-component-action="up">Move up</button><button type="button" data-component-action="down">Move down</button>
         <button type="button" data-component-action="duplicate">Duplicate</button><button class="danger" type="button" data-component-action="delete">Delete</button>
@@ -474,6 +676,7 @@ function handleConfigChange(event) {
     if (dashboardProp === 'name') {
       document.getElementById('designer-name').value = target.value
       document.getElementById('dashboard-report-title').textContent = target.value
+      document.getElementById('dashboard-focus-title').textContent = target.value || 'Untitled dashboard'
     } else if (dashboardProp === 'subtitle') document.getElementById('dashboard-report-subtitle').textContent = target.value
     else document.getElementById('dashboard-report-eyebrow').textContent = target.value
     return
@@ -482,6 +685,9 @@ function handleConfigChange(event) {
     pushUndo()
     const prop = key.slice(6)
     state.dashboard.theme[prop] = target.value
+    if (prop === 'surface') state.dashboard.canvas.cardBackground = target.value
+    if (prop === 'text') state.dashboard.canvas.textColor = target.value
+    if (prop === 'secondary') state.dashboard.canvas.secondaryColor = target.value
     applyTheme()
     renderComponents()
     return
@@ -502,15 +708,41 @@ function updateComponentConfig(key, value) {
     if (!percentageChartTypes.has(value) && component.config.aggregation === 'percentage') {
       component.config.aggregation = 'sum'
     }
-  } else if (key === 'title' || key === 'size') component[key] = value
+  } else if (key === 'width') {
+    component.width = Math.max(1, Math.min(12, Number(value) || 1))
+    component.position.x = Math.min(component.position.x, 12 - component.width)
+  } else if (key === 'layout-x') component.position.x = Math.max(0, Math.min(12 - component.width, Number(value) || 0))
+  else if (key === 'layout-y') component.position.y = Math.max(0, Number(value) || 0)
+  else if (key === 'layout-section') component.layout_section = value
+  else if (key === 'height') component.height = Math.max(90, Math.min(1200, Number(value) || 255))
+  else if (key === 'title') component.title = value
+  else if (key.startsWith('appearance-')) {
+    const prop = key.slice('appearance-'.length)
+    if (prop === 'background') component.appearance.background = validColor(value, '')
+    else component.appearance[prop] = value
+  }
+  else if (key === 'size') {
+    component.size = value
+    const legacy = value === 'small' ? { width: 4, height: 240 } : value === 'large' ? { width: 12, height: 390 } : { width: 6, height: 255 }
+    Object.assign(component, legacy)
+  }
   else component.config[key] = value
-  if (key === 'dimension' || key === 'seriesField' || key === 'filterMode' || key === 'aggregation' || key === 'measure' || key === 'measure2' || key === 'sizeMeasure' || key === 'size' || key === 'type') {
+  if (key === 'dimension' || key === 'seriesField' || key === 'filterMode' || key === 'aggregation' || key === 'measure' || key === 'measure2' || key === 'sizeMeasure' || key === 'size' || key === 'type' || key === 'chartPalette' || key === 'width' || key === 'layout-x' || key === 'layout-y' || key === 'layout-section' || key.startsWith('appearance-')) {
     renderComponents()
     renderConfig()
   } else renderComponents()
 }
 
 function handleConfigAction(event) {
+  if (event.target.closest('[data-open-canvas-settings]')) {
+    openCanvasSettings()
+    return
+  }
+  const layoutAction = event.target.closest('[data-layout-action]')?.dataset.layoutAction
+  if (layoutAction) {
+    applyLayoutAction(layoutAction)
+    return
+  }
   if (event.target.closest('[data-dashboard-action="clear"]')) {
     if (!state.dashboard.components.length || !window.confirm('Remove all components from this dashboard?')) return
     pushUndo()
@@ -547,6 +779,8 @@ function addComponent(type) {
   if (!labels[type]) return
   pushUndo()
   const component = makeComponent(type, state.schema)
+  component.position = findComponentPosition(component.width, component.height)
+  component.z_index = Math.max(-1, ...state.dashboard.components.map((item) => Number(item.z_index) || 0)) + 1
   state.dashboard.components.push(component)
   state.selectedId = component.id
   renderComponents()
@@ -562,6 +796,7 @@ function addTemplate(name) {
     component.title = title
     return component
   })
+  arrangeComponents(state.dashboard.components)
   state.selectedId = state.dashboard.components[0]?.id || null
   state.dashboard.name = `${name.charAt(0).toUpperCase()}${name.slice(1)} dashboard`
   document.getElementById('designer-name').value = state.dashboard.name
@@ -571,11 +806,169 @@ function addTemplate(name) {
   renderConfig()
 }
 
+function validColor(value, fallback) {
+  return /^#[\da-f]{6}$/i.test(value || '') ? value : fallback
+}
+
+function renderCanvasPresets() {
+  const container = document.getElementById('canvas-preset-grid')
+  const selectedPreset = document.getElementById('canvas-settings-dialog').dataset.selectedPreset || state.dashboard.canvas.preset
+  container.replaceChildren()
+  Object.entries(canvasPresets).forEach(([id, preset]) => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = `canvas-preset${selectedPreset === id ? ' active' : ''}`
+    button.dataset.canvasPreset = id
+    button.setAttribute('aria-pressed', String(selectedPreset === id))
+    button.innerHTML = `<span class="canvas-preset-thumb" aria-hidden="true"><i></i><i></i><i></i><i></i></span><strong>${escapeHTML(preset.label)}</strong>`
+    button.style.setProperty('--preset-bg', preset.background)
+    button.style.setProperty('--preset-card', preset.cardBackground)
+    container.append(button)
+  })
+}
+
+function setCanvasPreset(id) {
+  const preset = canvasPresets[id]
+  if (!preset) return
+  document.getElementById('canvas-settings-dialog').dataset.selectedPreset = id
+  for (const [key, value] of Object.entries({
+    background: preset.background,
+    cardBackground: preset.cardBackground,
+    textColor: preset.textColor,
+    secondaryColor: preset.secondaryColor,
+    style: preset.style,
+    padding: preset.padding,
+    gap: preset.gap,
+    radius: preset.radius,
+    shadows: preset.shadows,
+  })) {
+    const input = document.getElementById({
+      background: 'canvas-background',
+      cardBackground: 'canvas-card-background',
+      textColor: 'canvas-text-color',
+      secondaryColor: 'canvas-secondary-color',
+      style: 'canvas-background-style',
+      padding: 'canvas-padding',
+      gap: 'canvas-gap',
+      radius: 'canvas-radius',
+      shadows: 'canvas-shadows',
+    }[key])
+    if (input.type === 'checkbox') input.checked = value
+    else input.value = value
+  }
+  renderCanvasPresets()
+}
+
+function openCanvasSettings() {
+  const canvas = state.dashboard.canvas
+  const dialog = document.getElementById('canvas-settings-dialog')
+  dialog.dataset.selectedPreset = canvas.preset
+  renderCanvasPresets()
+  document.getElementById('canvas-dimensions').value = canvas.dimensions || 'custom'
+  document.getElementById('canvas-width').value = canvas.width
+  document.getElementById('canvas-height').value = canvas.height
+  const custom = document.getElementById('canvas-dimensions').value === 'custom'
+  document.getElementById('canvas-width').disabled = !custom
+  document.getElementById('canvas-height').disabled = !custom
+  document.getElementById('canvas-background').value = validColor(canvas.background, '#F1F8F3')
+  document.getElementById('canvas-background-style').value = canvas.style
+  document.getElementById('canvas-padding').value = canvas.padding
+  document.getElementById('canvas-gap').value = canvas.gap
+  document.getElementById('canvas-radius').value = canvas.radius
+  document.getElementById('canvas-alignment').value = canvas.alignment || 'center'
+  document.getElementById('canvas-shadows').checked = canvas.shadows !== false
+  document.getElementById('canvas-grid').checked = canvas.grid !== false
+  document.getElementById('canvas-card-background').value = validColor(canvas.cardBackground, '#FFFFFF')
+  document.getElementById('canvas-text-color').value = validColor(canvas.textColor, '#174D35')
+  document.getElementById('canvas-secondary-color').value = validColor(canvas.secondaryColor, '#486B55')
+  document.getElementById('canvas-settings-dialog').showModal()
+}
+
+function applyCanvasSettings() {
+  const canvas = state.dashboard.canvas
+  const dialog = document.getElementById('canvas-settings-dialog')
+  const dimension = document.getElementById('canvas-dimensions').value
+  const custom = dimension === 'custom'
+  const [presetWidth, presetHeight] = canvasDimensions[dimension] || [Number(canvas.width) || 1440, Number(canvas.height) || 900]
+  const readNumber = (id, fallback, min, max) => Math.min(max, Math.max(min, Number(document.getElementById(id).value) || fallback))
+  pushUndo()
+  Object.assign(canvas, {
+    preset: dialog.dataset.selectedPreset || canvas.preset || 'soft-mint',
+    dimensions: dimension,
+    width: custom ? readNumber('canvas-width', 1440, 320, 5000) : presetWidth,
+    height: custom ? readNumber('canvas-height', 900, 320, 5000) : presetHeight,
+    background: validColor(document.getElementById('canvas-background').value, '#F1F8F3'),
+    cardBackground: validColor(document.getElementById('canvas-card-background').value, '#FFFFFF'),
+    textColor: validColor(document.getElementById('canvas-text-color').value, '#174D35'),
+    secondaryColor: validColor(document.getElementById('canvas-secondary-color').value, '#486B55'),
+    style: document.getElementById('canvas-background-style').value === 'soft-gradient' ? 'soft-gradient' : 'solid',
+    padding: readNumber('canvas-padding', 28, 0, 100),
+    gap: readNumber('canvas-gap', 14, 0, 60),
+    radius: readNumber('canvas-radius', 10, 0, 40),
+    shadows: document.getElementById('canvas-shadows').checked,
+    grid: document.getElementById('canvas-grid').checked,
+    alignment: ['left', 'center', 'right'].includes(document.getElementById('canvas-alignment').value)
+      ? document.getElementById('canvas-alignment').value
+      : 'center',
+  })
+  state.dashboard.theme.surface = canvas.cardBackground
+  state.dashboard.theme.text = canvas.textColor
+  state.dashboard.theme.secondary = canvas.secondaryColor
+  applyTheme()
+  renderComponents()
+  renderConfig()
+  document.getElementById('canvas-settings-dialog').close()
+}
+
 function applyTheme() {
   const canvas = document.getElementById('dashboard-canvas')
-  canvas.style.setProperty('--report-accent', state.dashboard.theme.accent)
-  canvas.style.setProperty('--report-surface', state.dashboard.theme.surface)
-  canvas.style.setProperty('--report-ink', state.dashboard.theme.text)
+  const settings = state.dashboard.canvas
+  const dark = settings.preset === 'dark-analytics'
+  const background = validColor(settings.background, '#F1F8F3')
+  const surface = validColor(settings.cardBackground, '#FFFFFF')
+  const text = validColor(settings.textColor, '#174D35')
+  const secondary = validColor(settings.secondaryColor, '#486B55')
+  canvas.style.setProperty('--report-accent', state.dashboard.theme.accent || '#206B48')
+  canvas.style.setProperty('--report-surface', surface)
+  canvas.style.setProperty('--report-ink', text)
+  canvas.style.setProperty('--report-muted', secondary)
+  canvas.style.setProperty('--report-border', dark ? '#385B43' : '#D5EBDD')
+  canvas.style.setProperty('--report-card-radius', `${Math.max(0, Math.min(40, Number(settings.radius) || 0))}px`)
+  canvas.style.setProperty('--report-card-gap', `${Math.max(0, Math.min(60, Number(settings.gap) || 0))}px`)
+  canvas.style.setProperty('--report-padding', `${Math.max(0, Math.min(100, Number(settings.padding) || 0))}px`)
+  canvas.style.setProperty('--report-background', settings.style === 'soft-gradient'
+    ? `linear-gradient(145deg, ${background}, ${dark ? '#172920' : '#FFFFFF'})`
+    : background)
+  canvas.style.setProperty('--report-shadow', settings.shadows === false ? 'none' : '0 4px 14px -12px rgba(23,77,53,.4)')
+  canvas.dataset.dashboardTheme = dark ? 'dark' : 'light'
+  canvas.style.width = `${Math.max(320, Math.min(5000, Number(settings.width) || 1440))}px`
+  canvas.style.minHeight = `${Math.max(320, Math.min(5000, Number(settings.height) || 900))}px`
+  canvas.style.marginInline = settings.alignment === 'left' ? '0 auto 0 0' : settings.alignment === 'right' ? '0 0 0 auto' : '0 auto'
+  canvas.dataset.editorGrid = String(settings.grid !== false)
+  const scroll = document.querySelector('.designer-canvas-scroll')
+  if (scroll) scroll.dataset.canvasGrid = String(settings.grid !== false)
+}
+
+function chartTheme() {
+  const dark = state.dashboard.canvas.preset === 'dark-analytics'
+  const palette = chartPalettes[state.dashboard.theme.palette] || chartPalettes.forest
+  return dark
+    ? {
+        ink: state.dashboard.canvas.textColor || '#e4f1e8',
+        muted: state.dashboard.canvas.secondaryColor || '#b4cabb',
+        border: '#456b50',
+        grid: '#294533',
+        tooltip: state.dashboard.canvas.cardBackground || '#172920',
+        palette: palette.map((color, index) => index === 0 ? '#83D6A4' : color),
+      }
+    : {
+        ink: state.dashboard.canvas.textColor || '#174D35',
+        muted: state.dashboard.canvas.secondaryColor || '#486B55',
+        border: '#B4D9C1',
+        grid: '#EAF6EE',
+        tooltip: state.dashboard.canvas.cardBackground || '#FFFFFF',
+        palette,
+      }
 }
 
 function displayRows() {
@@ -698,7 +1091,7 @@ function legendOption(component, names = []) {
     align,
     itemGap: Math.max(0, Math.min(40, Number(config.legendItemSpacing) || 0)),
     textStyle: {
-      color: '#486B55',
+      color: chartTheme().muted,
       fontSize: Math.max(8, Math.min(18, Number(config.legendTextSize) || 9)),
     },
     ...(position === 'top' ? { top: 4, left: positionAlign } : {}),
@@ -711,14 +1104,15 @@ function legendOption(component, names = []) {
 function chartTooltip(component, pie = false) {
   const config = component.config
   if (config.showTooltips === false) return { show: false }
+  const darkTooltip = config.tooltipStyle === 'dark'
   return {
     show: true,
     trigger: pie || ['scatter', 'bubble'].includes(component.type) ? 'item' : 'axis',
-    backgroundColor: '#FFFFFF',
-    borderColor: '#CFE5D6',
+    backgroundColor: darkTooltip ? '#172920' : chartTheme().tooltip,
+    borderColor: chartTheme().border,
     borderWidth: 1,
     padding: [9, 12],
-    textStyle: { color: '#174D35', fontSize: 11 },
+    textStyle: { color: chartTheme().ink, fontSize: 11 },
     extraCssText: 'box-shadow: 0 6px 20px rgba(23,77,53,.14); border-radius: 6px;',
     axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(38,155,101,.08)' } },
     formatter: (input) => {
@@ -751,27 +1145,33 @@ function chartTooltip(component, pie = false) {
 function chartOption(component) {
   const rows = displayRows()
   const { type, config } = component
+  const colors = chartTheme()
+  const labelSize = Math.max(7, Math.min(16, Number(config.axisLabelSize) || 9))
+  const labelColor = validColor(config.axisLabelColor, colors.muted)
+  const gridColor = validColor(config.gridLineColor, colors.grid)
+  const barSpacing = Number(config.barSpacing)
+  const sliceSpacing = Number(config.sliceSpacing)
   const axis = {
-    axisLine: { lineStyle: { color: '#B4D9C1' } },
-    axisLabel: { color: '#486B55', fontSize: 10, hideOverlap: true, margin: 10 },
-    nameTextStyle: { color: '#174D35', fontSize: 10, fontWeight: 600 },
-    splitLine: { show: component.config.showGridLines !== false, lineStyle: { color: '#EAF6EE', type: 'dashed' } },
+    axisLine: { lineStyle: { color: colors.border } },
+    axisLabel: { color: labelColor, fontSize: labelSize, hideOverlap: true, margin: 8 },
+    nameTextStyle: { color: colors.ink, fontSize: 10, fontWeight: 600 },
+    splitLine: { show: component.config.showGridLines !== false, lineStyle: { color: gridColor, type: 'dashed' } },
   }
   const legend = legendOption(component)
   const legendVisible = component.config.showLegend !== false
   const legendPosition = component.config.legendPosition || 'bottom'
   const base = {
-    animationDuration: 450,
-    color: palette,
+    animationDuration: 300,
+    color: chartPalettes[config.chartPalette] || colors.palette,
     backgroundColor: config.chartBackground || 'transparent',
-    textStyle: { color: '#174D35', fontFamily: 'Inter, sans-serif', fontSize: 11 },
+    textStyle: { color: colors.ink, fontFamily: 'Inter, sans-serif', fontSize: Math.min(12, labelSize + 1) },
     tooltip: chartTooltip(component),
     ...(type === 'heatmap' ? {} : { legend }),
     grid: {
-      top: legendVisible && legendPosition === 'top' ? 48 : 24,
-      left: legendVisible && legendPosition === 'left' ? 112 : 48,
-      right: legendVisible && legendPosition === 'right' ? 112 : 22,
-      bottom: legendVisible && legendPosition === 'bottom' ? 62 : 38,
+      top: (legendVisible && legendPosition === 'top' ? 34 : 6) + (Number(config.chartPadding) || 0),
+      left: (legendVisible && legendPosition === 'left' ? 78 : 32) + (Number(config.chartPadding) || 0),
+      right: (legendVisible && legendPosition === 'right' ? 78 : 6) + (Number(config.chartPadding) || 0),
+      bottom: (legendVisible && legendPosition === 'bottom' ? 42 : 22) + (Number(config.chartPadding) || 0),
       containLabel: true,
     },
   }
@@ -826,7 +1226,7 @@ function chartOption(component) {
         label: {
           show: config.showDataLabels === true,
           position: 'inside',
-          color: '#174D35',
+          color: chartTheme().ink,
           formatter: (params) => {
             const value = Number(params.value) || 0
             const percentage = item.percentages[params.dataIndex] ?? 0
@@ -860,18 +1260,20 @@ function chartOption(component) {
       name: seriesName,
       type: type === 'line' || type === 'area' ? 'line' : 'bar',
       data: categoryData,
-      smooth: type === 'line' || type === 'area',
-      barMaxWidth: 42,
-      barCategoryGap: '35%',
-      itemStyle: { borderRadius: type.includes('Bar') || type === 'bar' ? 4 : 0 },
-      lineStyle: { width: 2.5 },
+      barMaxWidth: Math.max(8, Math.min(80, Number(config.barThickness) || 28)),
+      barCategoryGap: `${Math.max(0, Math.min(90, Number.isFinite(barSpacing) ? barSpacing : 35))}%`,
+      itemStyle: { borderRadius: Math.max(0, Math.min(24, Number(config.barRadius) || 0)) },
+      lineStyle: { width: Math.max(1, Math.min(8, Number(config.lineThickness) || 2.5)) },
       symbol: 'circle',
-      symbolSize: type === 'line' || type === 'area' ? 6 : undefined,
-      areaStyle: type === 'area' ? { opacity: .2 } : undefined,
+      showSymbol: config.showMarkers !== false,
+      symbolSize: type === 'line' || type === 'area' ? 5 : undefined,
+      smooth: ['line', 'area'].includes(type) && config.smooth !== false,
+      areaStyle: type === 'area' ? { opacity: Math.max(0, Math.min(100, Number(config.areaOpacity) || 0)) / 100 } : undefined,
       label: {
         show: config.showDataLabels === true,
-        color: '#174D35',
+        color: chartTheme().ink,
         position: horizontal ? 'right' : 'top',
+        labelLayout: { hideOverlap: true },
         formatter: labelFormatter,
       },
     }
@@ -923,29 +1325,40 @@ function chartOption(component) {
     }
   }
   if (type === 'pie' || type === 'donut') {
+    const showPieLabels = config.showDataLabels !== false
+      && groups.length <= Math.max(6, Math.floor((Number(component.width) || 4) * 1.5))
+    const pieLegend = visibleLegend(names)
+    if (groups.length > 10) {
+      Object.assign(pieLegend, {
+        type: 'scroll',
+        height: 28,
+        itemGap: 4,
+        formatter: (name) => name.length > 14 ? `${name.slice(0, 12)}…` : name,
+      })
+    }
     return {
       ...base,
-      legend: visibleLegend(names),
+      legend: pieLegend,
       tooltip: chartTooltip(component, true),
       series: [{
         name: aggregationTitle(config),
         type: 'pie',
-        radius: type === 'donut' ? ['40%', '67%'] : '64%',
+        radius: type === 'donut' ? [`${Math.max(20, Math.min(70, Number(config.donutHoleSize) || 40))}%`, '67%'] : '64%',
         center: legendVisible && ['left', 'right'].includes(legendPosition) ? ['50%', '50%'] : ['50%', legendVisible ? '44%' : '50%'],
         data: groups.map(([name, value, percentage]) => ({ name, value, percentage })),
         label: {
-          show: config.showDataLabels !== false,
-          color: '#174D35',
+          show: showPieLabels,
+          color: chartTheme().ink,
           fontSize: 10,
           minShowLabelAngle: 4,
-          labelLayout: { hideOverlap: true, moveOverlap: 'shiftY' },
           formatter: (params) => {
             const share = Number(params.data?.percentage ?? params.percent) || 0
             if (config.showPercentage || config.aggregation === 'percentage') return `${params.name}: ${numberText(share, config.decimalPrecision)}%`
             return `${params.name}: ${numberText(params.value, config.decimalPrecision, config.numberFormat)}`
           },
         },
-        itemStyle: { borderColor: '#fff', borderWidth: 2 },
+        labelLayout: { hideOverlap: true, moveOverlap: 'shiftY' },
+        itemStyle: { borderColor: colors.tooltip, borderWidth: Math.max(0, Math.min(12, Number.isFinite(sliceSpacing) ? sliceSpacing : 2)) },
       }],
     }
   }
@@ -994,8 +1407,8 @@ function chartOption(component) {
       }],
     }
   }
-  if (type === 'radar') return { ...base, legend: visibleLegend([component.title]), radar: { indicator: groups.map(([name]) => ({ name, max: Math.max(1, ...values.map(Math.abs)) })), axisName: { color: '#206B48', fontSize: 9 }, splitArea: { areaStyle: { color: ['#FFFFFF', '#F4FBF6'] } } }, series: [{ name: component.title, type: 'radar', data: [{ value: values, name: component.title }], label: { show: config.showDataLabels === true, formatter: (params) => numberText(params.value, config.decimalPrecision) }, areaStyle: { opacity: .18 } }] }
-  if (type === 'treemap' || type === 'funnel') return { ...base, legend: visibleLegend(names), tooltip: chartTooltip(component, true), series: [{ name: aggregationTitle(config), type, data: groups.map(([name, value]) => ({ name, value })), label: { show: config.showDataLabels !== false, color: '#174D35', fontSize: 10, formatter: (params) => numberText(params.value, config.decimalPrecision, config.numberFormat) }, itemStyle: { borderColor: '#fff', borderWidth: 2 } }] }
+  if (type === 'radar') return { ...base, legend: visibleLegend([component.title]), radar: { indicator: groups.map(([name]) => ({ name, max: Math.max(1, ...values.map(Math.abs)) })), axisName: { color: chartTheme().muted, fontSize: 9 }, splitArea: { areaStyle: { color: document.documentElement.dataset.theme === 'dark' ? ['#172920', '#20372a'] : ['#FFFFFF', '#F4FBF6'] } } }, series: [{ name: component.title, type: 'radar', data: [{ value: values, name: component.title }], label: { show: config.showDataLabels === true, formatter: (params) => numberText(params.value, config.decimalPrecision) }, areaStyle: { opacity: .18 } }] }
+  if (type === 'treemap' || type === 'funnel') return { ...base, legend: visibleLegend(names), tooltip: chartTooltip(component, true), series: [{ name: aggregationTitle(config), type, data: groups.map(([name, value]) => ({ name, value })), label: { show: config.showDataLabels !== false, color: chartTheme().ink, fontSize: 10, formatter: (params) => numberText(params.value, config.decimalPrecision, config.numberFormat) }, itemStyle: { borderColor: '#fff', borderWidth: 2 } }] }
   if (type === 'heatmap') {
     const xField = config.measure2
     const xNames = [...new Set(rows.map((row) => String(row[config.dimension] ?? '(blank)')))].slice(0, 18)
@@ -1012,9 +1425,9 @@ function chartOption(component) {
       tooltip: config.showTooltips === false ? { show: false } : {
         trigger: 'item',
         position: 'top',
-        backgroundColor: '#FFFFFF',
-        borderColor: '#CFE5D6',
-        textStyle: { color: '#174D35', fontSize: 11 },
+        backgroundColor: chartTheme().tooltip,
+        borderColor: chartTheme().border,
+        textStyle: { color: chartTheme().ink, fontSize: 11 },
         formatter: (params) => {
           const [x, y, value] = params.value
           return `${escapeHTML(config.dimension)}: ${escapeHTML(xNames[x])}<br>${escapeHTML(xField)}: ${escapeHTML(yNames[y])}<br>${escapeHTML(aggregationTitle(config))}: ${numberText(value, config.decimalPrecision, config.numberFormat)}`
@@ -1023,8 +1436,8 @@ function chartOption(component) {
       grid: { top: 42, left: 80, right: 20, bottom: 52 },
       xAxis: { type: 'category', name: config.dimension, nameLocation: 'middle', nameGap: 28, data: xNames, splitArea: { show: true }, ...axis },
       yAxis: { type: 'category', name: xField, nameLocation: 'middle', nameGap: 48, data: yNames, splitArea: { show: true }, ...axis },
-      visualMap: { min: Math.min(0, ...valuesHeat.map((item) => item[2])), max: Math.max(1, ...valuesHeat.map((item) => item[2])), calculable: true, orient: 'horizontal', left: 'center', bottom: 2, inRange: { color: ['#DDF4E6', '#80D6A5', '#269B65', '#174D35'] } },
-      series: [{ name: aggregationTitle(config), type: 'heatmap', data: valuesHeat, label: { show: config.showDataLabels === true && valuesHeat.length < 60, color: '#174D35', fontSize: 9 } }],
+      visualMap: { min: Math.min(0, ...valuesHeat.map((item) => item[2])), max: Math.max(1, ...valuesHeat.map((item) => item[2])), calculable: true, orient: 'horizontal', left: 'center', bottom: 2, inRange: { color: chartTheme().palette.slice(0, 4) } },
+      series: [{ name: aggregationTitle(config), type: 'heatmap', data: valuesHeat, label: { show: config.showDataLabels === true && valuesHeat.length < 60, color: chartTheme().ink, fontSize: 9 } }],
     }
   }
   return { ...base, xAxis: { type: 'category', data: names, ...axis }, yAxis: { type: 'value', ...axis }, series: [{ name: config.measure || 'Value', type: 'bar', data: categoryData, label: { show: config.showDataLabels === true, formatter: labelFormatter } }] }
@@ -1032,20 +1445,36 @@ function chartOption(component) {
 
 function componentCard(component) {
   const card = document.createElement('article')
-  card.className = `dashboard-card${component.id === state.selectedId ? ' selected' : ''}`
+  card.className = `dashboard-card${component.id === state.selectedId ? ' selected' : ''}${component.visible === false ? ' component-hidden' : ''}`
   card.dataset.componentId = component.id
-  card.dataset.size = component.size || 'medium'
-  card.draggable = true
+  card.dataset.visible = String(component.visible !== false)
+  updateComponentCardLayout(card, component)
+  card.style.height = `${Math.max(90, Math.min(1200, Number(component.height) || 255))}px`
+  const componentMinHeight = Math.max(90, Math.min(1000, Number(component.config.minHeight) || 120))
+  const componentMaxHeight = Math.max(componentMinHeight, Math.max(150, Math.min(1200, Number(component.config.maxHeight) || 1200)))
+  card.style.minHeight = `${componentMinHeight}px`
+  card.style.maxHeight = `${componentMaxHeight}px`
+  card.style.justifySelf = component.appearance.justify || 'stretch'
+  card.style.alignSelf = component.appearance.align || 'stretch'
+  card.style.setProperty('--component-card-bg', validColor(component.appearance.background, state.dashboard.canvas.cardBackground))
+  card.style.setProperty('--component-card-radius', `${Math.max(0, Math.min(32, Number(component.appearance.radius) || 8))}px`)
+  card.style.setProperty('--component-card-shadow', component.appearance.shadow === false ? 'none' : 'var(--report-shadow)')
+  card.style.setProperty('--component-card-padding', `${Math.max(0, Math.min(48, Number(component.appearance.padding) || 12))}px`)
+  card.style.setProperty('--component-title-size', `${Math.max(9, Math.min(24, Number(component.config.titleSize) || 13))}px`)
+  card.draggable = false
   const header = document.createElement('header')
   header.className = 'dashboard-card-header'
-  header.innerHTML = `<h3>${escapeHTML(component.title || labels[component.type])}</h3><button type="button" data-card-action="up" title="Move up" aria-label="Move up"><i class="bi bi-arrow-up"></i></button><button type="button" data-card-action="down" title="Move down" aria-label="Move down"><i class="bi bi-arrow-down"></i></button><button type="button" data-card-action="delete" title="Delete component" aria-label="Delete component"><i class="bi bi-trash3"></i></button>`
+  header.innerHTML = `<span class="dashboard-card-grab" data-editor-only title="Drag to reorder" aria-hidden="true"><i class="bi bi-grip-vertical"></i></span><h3>${escapeHTML(component.title || labels[component.type])}</h3><button type="button" data-editor-only data-card-action="visibility" title="${component.visible === false ? 'Show' : 'Hide'} in presentation" aria-label="${component.visible === false ? 'Show' : 'Hide'} component"><i class="bi ${component.visible === false ? 'bi-eye-slash' : 'bi-eye'}"></i></button><button type="button" data-editor-only data-card-action="up" title="Move forward" aria-label="Move forward"><i class="bi bi-arrow-up"></i></button><button type="button" data-editor-only data-card-action="down" title="Move backward" aria-label="Move backward"><i class="bi bi-arrow-down"></i></button><button type="button" data-editor-only data-card-action="duplicate" title="Duplicate component" aria-label="Duplicate component"><i class="bi bi-copy"></i></button><button type="button" data-editor-only data-card-action="delete" title="Delete component" aria-label="Delete component"><i class="bi bi-trash3"></i></button>`
   const body = document.createElement('div')
   body.className = 'dashboard-card-body'
+  body.style.padding = `var(--component-card-padding)`
   card.append(header, body)
   if (chartTypes.has(component.type)) {
     const chart = document.createElement('div')
     chart.className = 'dashboard-chart'
     chart.id = `chart-${component.id}`
+    chart.style.border = component.config.chartBorder ? `1px solid ${state.dashboard.canvas.textColor}` : '0'
+    chart.style.borderRadius = '6px'
     body.append(chart)
   } else if (component.type === 'kpi') {
     const raw = component.config.aggregation === 'count'
@@ -1091,17 +1520,95 @@ function componentCard(component) {
     document.querySelectorAll('.dashboard-card').forEach((item) => item.classList.toggle('selected', item.dataset.componentId === component.id))
     renderConfig()
   })
-  card.addEventListener('dragstart', (event) => {
-    event.dataTransfer.setData('text/plain', component.id)
-    card.classList.add('dragging')
-  })
-  card.addEventListener('dragend', () => card.classList.remove('dragging'))
-  card.addEventListener('dragover', (event) => event.preventDefault())
-  card.addEventListener('drop', (event) => {
+  header.addEventListener('pointerdown', (event) => {
+    if (event.target.closest('button')) return
     event.preventDefault()
-    reorderComponent(event.dataTransfer.getData('text/plain'), component.id)
+    selectComponent(component.id)
+    pushUndo()
+    state.componentInteraction = {
+      kind: 'move',
+      id: component.id,
+      pointerId: event.pointerId,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      x: component.position.x,
+      y: component.position.y,
+    }
   })
+  const resizeHandle = document.createElement('button')
+  resizeHandle.type = 'button'
+  resizeHandle.className = 'dashboard-card-resize'
+  resizeHandle.dataset.editorOnly = ''
+  resizeHandle.setAttribute('aria-label', `Resize ${component.title}`)
+  resizeHandle.title = 'Drag to resize'
+  resizeHandle.innerHTML = '<i class="bi bi-arrows-angle-expand"></i>'
+  resizeHandle.addEventListener('pointerdown', (event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    selectComponent(component.id)
+    pushUndo()
+    state.componentInteraction = {
+      kind: 'resize',
+      id: component.id,
+      pointerId: event.pointerId,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      width: Number(component.width) || 6,
+      height: Number(component.height) || 255,
+    }
+  })
+  card.append(resizeHandle)
   return card
+}
+
+function updateComponentCardLayout(card, component) {
+  const width = Math.max(1, Math.min(12, Number(component.width) || 6))
+  const x = Math.max(0, Math.min(12 - width, Number(component.position?.x) || 0))
+  const y = Math.max(0, Number(component.position?.y) || 0)
+  const gap = Math.max(0, Math.min(60, Number(state.dashboard.canvas.gap) || 0))
+  card.style.left = `calc(${(x / 12) * 100}% + ${gap / 2}px)`
+  card.style.top = `${y}px`
+  card.style.width = `calc(${(width / 12) * 100}% - ${gap}px)`
+  card.style.zIndex = String(Number(component.z_index) || 0)
+}
+
+function selectComponent(id) {
+  state.selectedId = id
+  document.querySelectorAll('.dashboard-card').forEach((item) => {
+    item.classList.toggle('selected', item.dataset.componentId === id)
+  })
+  renderConfig()
+}
+
+function handleComponentPointerMove(event) {
+  const interaction = state.componentInteraction
+  if (!interaction || interaction.pointerId !== event.pointerId) return
+  const component = state.dashboard.components.find((item) => item.id === interaction.id)
+  const card = document.querySelector(`[data-component-id="${CSS.escape(interaction.id)}"]`)
+  if (!component || !card) return
+  const canvas = document.getElementById('dashboard-components')
+  const bounds = canvas.getBoundingClientRect()
+  if (interaction.kind === 'move') {
+    const deltaX = (event.clientX - interaction.pointerX) / Math.max(1, bounds.width) * 12
+    const width = Number(component.width) || 6
+    component.position.x = Math.max(0, Math.min(12 - width, Math.round(interaction.x + deltaX)))
+    component.position.y = Math.max(0, Math.round((interaction.y + event.clientY - interaction.pointerY) / 20) * 20)
+  } else {
+    const deltaColumns = (event.clientX - interaction.pointerX) / Math.max(1, bounds.width) * 12
+    component.width = Math.max(1, Math.min(12 - component.position.x, Math.round(interaction.width + deltaColumns)))
+    component.height = Math.max(90, Math.min(1200, Math.round((interaction.height + event.clientY - interaction.pointerY) / 20) * 20))
+    card.style.height = `${component.height}px`
+  }
+  updateComponentCardLayout(card, component)
+  canvas.style.height = `${Math.max(240, ...state.dashboard.components.map((item) => Number(item.position?.y || 0) + Number(item.height || 255))) + 20}px`
+  state.charts.get(component.id)?.resize()
+}
+
+function handleComponentPointerEnd(event) {
+  if (!state.componentInteraction || state.componentInteraction.pointerId !== event.pointerId) return
+  state.componentInteraction = null
+  setStatus('Unsaved changes')
+  state.charts.forEach((chart) => chart.resize())
 }
 
 function moveOrDelete(id, action) {
@@ -1111,23 +1618,25 @@ function moveOrDelete(id, action) {
   if (action === 'delete') {
     state.dashboard.components.splice(index, 1)
     if (state.selectedId === id) state.selectedId = null
+  } else if (action === 'visibility') {
+    state.dashboard.components[index].visible = state.dashboard.components[index].visible === false
+  } else if (action === 'duplicate') {
+    const copy = structuredClone(state.dashboard.components[index])
+    copy.id = crypto.randomUUID()
+    copy.title = `${copy.title} copy`
+    copy.position = findComponentPosition(copy.width, copy.height)
+    copy.z_index = Math.max(-1, ...state.dashboard.components.map((item) => Number(item.z_index) || 0)) + 1
+    state.dashboard.components.splice(index + 1, 0, copy)
+    state.selectedId = copy.id
   } else {
-    const target = action === 'up' ? Math.max(0, index - 1) : Math.min(state.dashboard.components.length - 1, index + 1)
-    const [item] = state.dashboard.components.splice(index, 1)
-    state.dashboard.components.splice(target, 0, item)
+    const ordered = [...state.dashboard.components].sort((a, b) => (Number(a.z_index) || 0) - (Number(b.z_index) || 0))
+    const layerIndex = ordered.findIndex((item) => item.id === id)
+    const adjacent = ordered[layerIndex + (action === 'up' ? 1 : -1)]
+    const component = ordered[layerIndex]
+    if (component && adjacent) [component.z_index, adjacent.z_index] = [adjacent.z_index, component.z_index]
   }
   renderComponents()
   renderConfig()
-}
-
-function reorderComponent(fromId, toId) {
-  const from = state.dashboard.components.findIndex((item) => item.id === fromId)
-  const to = state.dashboard.components.findIndex((item) => item.id === toId)
-  if (from < 0 || to < 0 || from === to) return
-  pushUndo()
-  const [item] = state.dashboard.components.splice(from, 1)
-  state.dashboard.components.splice(to, 0, item)
-  renderComponents()
 }
 
 function renderFilters() {
@@ -1182,6 +1691,8 @@ function renderComponents(recreateCharts = true) {
   canvas.replaceChildren()
   applyTheme()
   renderFilters()
+  canvas.dataset.columnCount = '12'
+  canvas.style.height = `${Math.max(240, ...state.dashboard.components.map((item) => Number(item.position?.y || 0) + Number(item.height || 255))) + 20}px`
   if (!state.dashboard.components.length) {
     const empty = document.createElement('div')
     empty.className = 'dashboard-empty'
@@ -1189,6 +1700,11 @@ function renderComponents(recreateCharts = true) {
     canvas.append(empty)
   } else {
     state.dashboard.components.forEach((component) => {
+      component.position ||= findComponentPosition(component.width, component.height)
+      component.position.x = Math.max(0, Math.min(12 - Number(component.width || 6), Number(component.position.x) || 0))
+      component.position.y = Math.max(0, Number(component.position.y) || 0)
+      component.z_index = Number(component.z_index) || 0
+      component.layout_section ||= 'main'
       const card = componentCard(component)
       canvas.append(card)
       if (chartTypes.has(component.type) && state.rows.length && state.columns.length) {
@@ -1208,6 +1724,7 @@ function renderComponents(recreateCharts = true) {
           const chart = globalThis.echarts.init(chartNode, null, { renderer: 'canvas' })
           chart.setOption(chartOption(component), true)
           state.charts.set(component.id, chart)
+          requestAnimationFrame(() => chart.resize())
         } catch (error) {
           chartNode.textContent = `Could not render this visualization: ${error.message}`
           chartNode.classList.add('dashboard-empty')
@@ -1222,6 +1739,96 @@ function renderComponents(recreateCharts = true) {
   }
   state.rendering = false
   if (recreateCharts) renderFilters()
+}
+
+function autoArrange() {
+  if (!state.dashboard.components.length) {
+    showToast('Add components before arranging the dashboard.', 'error')
+    return
+  }
+  if (!window.confirm('Auto Arrange replaces component widths and heights with a compact balanced layout. Continue?')) return
+  pushUndo()
+  const priority = (type) => type === 'kpi' ? 0 : type === 'table' ? 3 : chartTypes.has(type) ? 1 : 2
+  state.dashboard.components = state.dashboard.components
+    .map((component, index) => ({ component, index }))
+    .sort((a, b) => priority(a.component.type) - priority(b.component.type) || a.index - b.index)
+    .map(({ component }) => component)
+  state.dashboard.components.forEach((component) => {
+    const size = defaultComponentSize(component.type)
+    if (component.type === 'kpi') Object.assign(component, { width: 3, height: 125 })
+    else if (component.type === 'table') Object.assign(component, { width: 12, height: 320 })
+    else if (component.type === 'pie' || component.type === 'donut') Object.assign(component, { width: 4, height: 250 })
+    else if (component.type === 'divider') Object.assign(component, { width: 12, height: 80 })
+    else if (component.type === 'text' || component.type === 'section' || component.type === 'filter' || component.type === 'image') {
+      Object.assign(component, { width: Math.min(12, Math.max(4, size.width)), height: Math.max(160, size.height) })
+    } else Object.assign(component, { width: 6, height: 255 })
+  })
+  arrangeComponents(state.dashboard.components)
+  renderComponents()
+  renderConfig()
+  setStatus('Auto-arranged · unsaved changes')
+}
+
+function applyLayoutAction(action) {
+  if (!state.dashboard.components.length) return
+  pushUndo()
+  const components = state.dashboard.components
+  if (action === 'left' || action === 'center' || action === 'right') {
+    components.forEach((item) => {
+      item.position.x = action === 'left' ? 0 : action === 'right' ? 12 - item.width : Math.round((12 - item.width) / 2)
+    })
+  } else if (action === 'top' || action === 'middle' || action === 'bottom') {
+    const minY = Math.min(...components.map((item) => Number(item.position.y) || 0))
+    const maxY = Math.max(...components.map((item) => (Number(item.position.y) || 0) + Number(item.height || 255)))
+    components.forEach((item) => {
+      const height = Number(item.height) || 255
+      item.position.y = action === 'top' ? minY : action === 'bottom' ? maxY - height : Math.round((minY + maxY - height) / 2 / 20) * 20
+    })
+  } else if (action === 'equal-width') {
+    const width = Math.max(1, Math.min(12, Math.floor(12 / components.length)))
+    components.forEach((item, index) => {
+      item.width = width
+      item.position.x = Math.min(12 - width, index * width)
+    })
+  } else if (action === 'distribute-horizontal') {
+    const totalWidth = components.reduce((total, item) => total + Number(item.width || 6), 0)
+    const gap = components.length > 1 ? Math.max(0, (12 - totalWidth) / (components.length - 1)) : 0
+    let cursor = 0
+    components.forEach((item) => {
+      item.position.x = Math.min(12 - item.width, Math.round(cursor))
+      cursor += Number(item.width || 6) + gap
+    })
+  } else if (action === 'equal-height') {
+    const height = Math.round(components.reduce((total, item) => total + Number(item.height || 255), 0) / components.length)
+    components.forEach((item) => { item.height = Math.max(90, Math.min(1200, height)) })
+  } else if (action === 'distribute-vertical') {
+    const totalHeight = components.reduce((total, item) => total + Number(item.height || 255), 0)
+    const start = Math.min(...components.map((item) => Number(item.position.y) || 0))
+    const end = Math.max(...components.map((item) => (Number(item.position.y) || 0) + Number(item.height || 255)))
+    const gap = components.length > 1 ? Math.max(0, (end - start - totalHeight) / (components.length - 1)) : 0
+    const verticalOrder = [...components].sort((a, b) => Number(a.position.y) - Number(b.position.y))
+    let cursor = start
+    verticalOrder.forEach((item) => {
+      item.position.y = Math.round(cursor / 20) * 20
+      cursor += Number(item.height || 255) + gap
+    })
+  } else if (action === 'front' || action === 'back') {
+    const z = action === 'front'
+      ? Math.max(...components.map((item) => Number(item.z_index) || 0)) + 1
+      : Math.min(...components.map((item) => Number(item.z_index) || 0)) - 1
+    if (state.selectedId) {
+      const selected = components.find((item) => item.id === state.selectedId)
+      if (selected) selected.z_index = z
+    }
+  } else if (action === 'up' || action === 'down') {
+    const ordered = [...components].sort((a, b) => (Number(a.z_index) || 0) - (Number(b.z_index) || 0))
+    const index = ordered.findIndex((item) => item.id === state.selectedId)
+    const adjacent = ordered[index + (action === 'up' ? 1 : -1)]
+    const selected = ordered[index]
+    if (selected && adjacent) [selected.z_index, adjacent.z_index] = [adjacent.z_index, selected.z_index]
+  }
+  renderComponents()
+  setStatus('Layout updated · unsaved changes')
 }
 
 async function refreshData() {
@@ -1242,9 +1849,33 @@ async function refreshData() {
 async function loadSavedDashboards() {
   const response = await api('/api/dashboards')
   state.saved = Array.isArray(response) ? response : (response?.dashboards || response?.items || [])
+  for (const id of state.selectedDashboardIds) {
+    if (!state.saved.some((dashboard) => (dashboard.id || dashboard.dashboard_id) === id)) state.selectedDashboardIds.delete(id)
+  }
   const select = document.getElementById('designer-saved')
   select.replaceChildren(new Option('Saved dashboards', ''))
   state.saved.forEach((dashboard) => select.add(new Option(dashboard.name || 'Untitled dashboard', dashboard.id || dashboard.dashboard_id)))
+  renderSavedDashboards()
+}
+
+function renderSavedDashboards() {
+  const list = document.getElementById('saved-dashboard-list')
+  if (!state.saved.length) {
+    list.innerHTML = '<p class="empty-inline">No saved dashboards yet. Save a dashboard to manage it here.</p>'
+  } else {
+    list.innerHTML = state.saved.map((dashboard) => {
+      const id = dashboard.id || dashboard.dashboard_id
+      return `<article class="saved-dashboard-item"><input type="checkbox" data-select-dashboard="${escapeHTML(id)}" aria-label="Select ${escapeHTML(dashboard.name)}" ${state.selectedDashboardIds.has(id) ? 'checked' : ''} /><span title="${escapeHTML(dashboard.name)}">${escapeHTML(dashboard.name || 'Untitled dashboard')}</span><button type="button" data-open-saved-dashboard="${escapeHTML(id)}" aria-label="Open ${escapeHTML(dashboard.name)}" title="Open dashboard"><i class="bi bi-folder2-open"></i></button><button type="button" data-delete-saved-dashboard="${escapeHTML(id)}" aria-label="Delete ${escapeHTML(dashboard.name)}" title="Delete dashboard"><i class="bi bi-trash3"></i></button></article>`
+    }).join('')
+  }
+  const selectedCount = state.selectedDashboardIds.size
+  const selectAll = document.getElementById('dashboard-select-all')
+  const count = document.getElementById('dashboard-selected-count')
+  const deleteSelected = document.getElementById('dashboard-delete-selected')
+  selectAll.checked = state.saved.length > 0 && selectedCount === state.saved.length
+  selectAll.indeterminate = selectedCount > 0 && selectedCount < state.saved.length
+  count.textContent = `${selectedCount} selected`
+  deleteSelected.disabled = selectedCount === 0
 }
 
 async function saveDashboard() {
@@ -1254,15 +1885,21 @@ async function saveDashboard() {
     return
   }
   const isUpdate = Boolean(state.dashboard.id)
+  const payload = { ...state.dashboard }
+  delete payload.id
+  delete payload.dashboard_id
+  delete payload.created_at
+  delete payload.updated_at
   const result = await api(isUpdate ? `/api/dashboards/${encodeURIComponent(state.dashboard.id)}` : '/api/dashboards', {
     method: isUpdate ? 'PUT' : 'POST',
-    body: JSON.stringify(state.dashboard),
+    body: JSON.stringify(payload),
   })
   const saved = safeDashboard(result)
   if (!saved.id && (result?.id || result?.dashboard_id)) saved.id = result.id || result.dashboard_id
   state.dashboard = saved
   document.getElementById('designer-name').value = saved.name
   document.getElementById('dashboard-report-title').textContent = saved.name
+  document.getElementById('dashboard-focus-title').textContent = saved.name
   setStatus('Saved')
   await loadSavedDashboards()
   showToast('Dashboard saved.')
@@ -1284,13 +1921,37 @@ async function deleteDashboard() {
     showToast('Open a saved dashboard before deleting it.', 'error')
     return
   }
-  if (!window.confirm(`Delete "${state.dashboard.name}"? This cannot be undone.`)) return
-  await api(`/api/dashboards/${encodeURIComponent(state.dashboard.id)}`, { method: 'DELETE' })
-  installDashboard(blankDashboard())
-  document.getElementById('designer-dataset').value = ''
-  await loadDatasets('')
+  return deleteDashboards([state.dashboard.id])
+}
+
+async function deleteDashboards(ids) {
+  const uniqueIds = [...new Set(ids)]
+  if (!uniqueIds.length) return
+  const closesOpenDashboard = uniqueIds.includes(state.dashboard.id)
+  const note = `Datasets referenced by these dashboards will be kept.${closesOpenDashboard ? ' The currently open dashboard will be closed after confirmation.' : ''}`
+  if (!await confirmPermanentDelete('dashboards', uniqueIds.length, null, note)) return
+  const response = uniqueIds.length === 1
+    ? await api(`/api/dashboards/${encodeURIComponent(uniqueIds[0])}`, { method: 'DELETE' })
+    : await api('/api/dashboards/delete-selected', {
+        method: 'POST',
+        body: JSON.stringify({ dashboard_ids: uniqueIds }),
+      })
+  const deletedIds = Array.isArray(response.deleted)
+    ? response.deleted.map((item) => item.dashboard_id)
+    : response.deleted ? [response.dashboard_id] : []
+  for (const id of deletedIds) state.selectedDashboardIds.delete(id)
+  if (deletedIds.includes(state.dashboard.id)) {
+    installDashboard(blankDashboard())
+    document.getElementById('designer-dataset').value = ''
+    await loadDatasets('')
+    setStatus('Deleted dashboard closed')
+  }
   await loadSavedDashboards()
-  showToast('Dashboard deleted.')
+  if (deletedIds.length) {
+    showToast(`${deletedIds.length} dashboard definition(s) deleted. Their datasets were kept.`)
+    window.dispatchEvent(new CustomEvent('app:refresh'))
+  }
+  if (response.failed?.length) showToast(`${response.failed.length} dashboard(s) could not be deleted.`, 'error')
 }
 
 async function duplicateDashboard() {
@@ -1314,32 +1975,268 @@ async function uploadDataset(file) {
   showToast('Dataset uploaded.')
 }
 
+function drawWrappedText(context, value, x, y, maxWidth, lineHeight, maxLines = 5) {
+  const words = String(value || '').split(/\s+/).filter(Boolean)
+  let line = ''
+  let lineNumber = 0
+  for (const word of words) {
+    const candidate = line ? `${line} ${word}` : word
+    if (context.measureText(candidate).width > maxWidth && line) {
+      context.fillText(line, x, y + lineNumber * lineHeight, maxWidth)
+      line = word
+      lineNumber += 1
+      if (lineNumber >= maxLines) return
+    } else line = candidate
+  }
+  if (line && lineNumber < maxLines) context.fillText(line, x, y + lineNumber * lineHeight, maxWidth)
+}
+
+function roundedRect(context, x, y, width, height, radius) {
+  context.beginPath()
+  context.roundRect(x, y, Math.max(0, width), Math.max(0, height), Math.max(0, radius))
+}
+
+function loadImage(source) {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve(image)
+    image.onerror = () => reject(new Error('A dashboard image could not be loaded for PNG export.'))
+    image.src = source
+  })
+}
+
+async function createDashboardPNG() {
+  const report = document.getElementById('dashboard-canvas')
+  const bounds = report.getBoundingClientRect()
+  const width = Math.max(report.scrollWidth, Math.ceil(bounds.width))
+  const height = Math.max(report.scrollHeight, Math.ceil(bounds.height))
+  const pixelRatio = 2
+  const output = document.createElement('canvas')
+  output.width = width * pixelRatio
+  output.height = height * pixelRatio
+  const context = output.getContext('2d')
+  if (!context) throw new Error('PNG export could not create a drawing surface.')
+  context.scale(pixelRatio, pixelRatio)
+  const colors = state.dashboard.canvas
+  if (colors.style === 'soft-gradient') {
+    const gradient = context.createLinearGradient(0, 0, width, height)
+    gradient.addColorStop(0, validColor(colors.background, '#F1F8F3'))
+    gradient.addColorStop(1, colors.preset === 'dark-analytics' ? '#172920' : '#FFFFFF')
+    context.fillStyle = gradient
+  } else context.fillStyle = validColor(colors.background, '#F1F8F3')
+  context.fillRect(0, 0, width, height)
+  const reportRect = report.getBoundingClientRect()
+  const relativeRect = (element) => {
+    const rect = element.getBoundingClientRect()
+    return { x: rect.left - reportRect.left, y: rect.top - reportRect.top, width: rect.width, height: rect.height }
+  }
+
+  const eyebrow = document.getElementById('dashboard-report-eyebrow')
+  const title = document.getElementById('dashboard-report-title')
+  const subtitle = document.getElementById('dashboard-report-subtitle')
+  const date = document.getElementById('dashboard-report-date')
+  const header = document.querySelector('.dashboard-report-header')
+  const headerRect = relativeRect(header)
+  const drawTextElement = (element, rect, fallbackSize, fallbackColor) => {
+    const style = getComputedStyle(element)
+    context.fillStyle = style.color || fallbackColor
+    context.font = `${style.fontWeight || 400} ${style.fontSize || `${fallbackSize}px`} ${style.fontFamily || 'Arial'}`
+    context.textBaseline = 'top'
+    drawWrappedText(context, element.textContent, rect.x, rect.y, rect.width, Math.ceil(fallbackSize * 1.35), 3)
+  }
+  drawTextElement(eyebrow, relativeRect(eyebrow), 10, colors.textColor)
+  drawTextElement(title, relativeRect(title), 22, colors.textColor)
+  drawTextElement(subtitle, relativeRect(subtitle), 12, colors.secondaryColor)
+  if (date?.textContent) {
+    const dateStyle = getComputedStyle(date)
+    const rect = relativeRect(date)
+    context.fillStyle = dateStyle.color || colors.secondaryColor
+    context.font = `${dateStyle.fontSize || '10px'} ${dateStyle.fontFamily || 'Arial'}`
+    context.textBaseline = 'top'
+    context.textAlign = 'right'
+    context.fillText(date.textContent, rect.x + rect.width, rect.y)
+    context.textAlign = 'left'
+  }
+  context.strokeStyle = colors.preset === 'dark-analytics' ? '#385B43' : '#D5EBDD'
+  context.lineWidth = 1
+  context.beginPath()
+  context.moveTo(headerRect.x, headerRect.y + headerRect.height)
+  context.lineTo(headerRect.x + headerRect.width, headerRect.y + headerRect.height)
+  context.stroke()
+
+  const filterBar = document.getElementById('dashboard-filter-bar')
+  for (const label of filterBar.querySelectorAll('label')) {
+    const rect = relativeRect(label)
+    const style = getComputedStyle(label)
+    context.fillStyle = validColor(colors.cardBackground, '#FFFFFF')
+    context.strokeStyle = colors.preset === 'dark-analytics' ? '#385B43' : '#D5EBDD'
+    roundedRect(context, rect.x, rect.y, rect.width, rect.height, 5)
+    context.fill()
+    context.stroke()
+    context.fillStyle = style.color || colors.textColor
+    context.font = `600 10px ${style.fontFamily || 'Arial'}`
+    context.textBaseline = 'middle'
+    const value = label.querySelector('select, input')?.value || label.textContent
+    context.fillText(`${label.childNodes[0]?.textContent?.trim() || 'Filter'}: ${value}`, rect.x + 8, rect.y + rect.height / 2, rect.width - 16)
+  }
+
+  for (const component of [...state.dashboard.components].sort((a, b) => (Number(a.z_index) || 0) - (Number(b.z_index) || 0))) {
+    if (component.visible === false) continue
+    const card = report.querySelector(`[data-component-id="${CSS.escape(component.id)}"]`)
+    if (!card || getComputedStyle(card).display === 'none') continue
+    const cardRect = relativeRect(card)
+    const cardStyle = getComputedStyle(card)
+    const radius = Math.max(0, Math.min(32, Number(component.appearance.radius) || Number(colors.radius) || 8))
+    context.save()
+    if (component.appearance.shadow !== false && colors.shadows !== false) {
+      context.shadowColor = 'rgba(23,77,53,.12)'
+      context.shadowBlur = 12
+      context.shadowOffsetY = 3
+    }
+    context.fillStyle = validColor(component.appearance.background, colors.cardBackground)
+    context.strokeStyle = cardStyle.borderColor || '#D5EBDD'
+    context.lineWidth = 1
+    roundedRect(context, cardRect.x, cardRect.y, cardRect.width, cardRect.height, radius)
+    context.fill()
+    context.shadowColor = 'transparent'
+    context.stroke()
+    context.save()
+    roundedRect(context, cardRect.x, cardRect.y, cardRect.width, cardRect.height, radius)
+    context.clip()
+
+    const cardTitle = card.querySelector('.dashboard-card-header h3')
+    const titleStyle = getComputedStyle(cardTitle)
+    const cardTitleRect = relativeRect(cardTitle)
+    context.fillStyle = titleStyle.color || colors.textColor
+    context.font = `${titleStyle.fontWeight || 700} ${titleStyle.fontSize || '13px'} ${titleStyle.fontFamily || 'Arial'}`
+    context.textBaseline = 'middle'
+    context.fillText(cardTitle.textContent, cardTitleRect.x, cardTitleRect.y + cardTitleRect.height / 2, cardTitleRect.width)
+    const cardHeaderRect = relativeRect(card.querySelector('.dashboard-card-header'))
+    context.strokeStyle = cardStyle.borderColor || '#D5EBDD'
+    context.beginPath()
+    context.moveTo(cardHeaderRect.x, cardHeaderRect.y + cardHeaderRect.height)
+    context.lineTo(cardHeaderRect.x + cardHeaderRect.width, cardHeaderRect.y + cardHeaderRect.height)
+    context.stroke()
+    const bodyRect = relativeRect(card.querySelector('.dashboard-card-body'))
+    context.save()
+    context.beginPath()
+    context.rect(bodyRect.x, bodyRect.y, bodyRect.width, bodyRect.height)
+    context.clip()
+
+    const chartNode = card.querySelector('.dashboard-chart')
+    const chart = chartNode && state.charts.get(component.id)
+    if (chart) {
+      const chartImage = await loadImage(chart.getDataURL({
+        type: 'png',
+        pixelRatio,
+        backgroundColor: component.config.chartBackground || 'transparent',
+      }))
+      const chartRect = relativeRect(chartNode)
+      context.drawImage(chartImage, chartRect.x, chartRect.y, chartRect.width, chartRect.height)
+    } else if (component.type === 'kpi') {
+      const value = card.querySelector('.dashboard-kpi strong')
+      const caption = card.querySelector('.dashboard-kpi span')
+      const valueRect = relativeRect(value)
+      const captionRect = relativeRect(caption)
+      const valueStyle = getComputedStyle(value)
+      context.fillStyle = valueStyle.color || colors.textColor
+      context.font = `${valueStyle.fontWeight || 700} ${valueStyle.fontSize || '28px'} ${valueStyle.fontFamily || 'Arial'}`
+      context.textBaseline = 'top'
+      context.fillText(value.textContent, valueRect.x, valueRect.y, valueRect.width)
+      const captionStyle = getComputedStyle(caption)
+      context.fillStyle = captionStyle.color || colors.secondaryColor
+      context.font = `${captionStyle.fontSize || '10px'} ${captionStyle.fontFamily || 'Arial'}`
+      context.fillText(caption.textContent, captionRect.x, captionRect.y, captionRect.width)
+    } else if (component.type === 'table') {
+      const table = card.querySelector('.dashboard-table')
+      if (table) {
+        for (const row of table.rows) {
+          for (const cell of row.cells) {
+            const cellRect = relativeRect(cell)
+            const cellStyle = getComputedStyle(cell)
+            if (row.parentElement.tagName === 'THEAD') {
+              context.fillStyle = colors.preset === 'dark-analytics' ? '#20372A' : '#F4FBF6'
+              context.fillRect(cellRect.x, cellRect.y, cellRect.width, cellRect.height)
+            }
+            context.fillStyle = cellStyle.color || colors.textColor
+            context.font = `${cellStyle.fontWeight || 400} ${cellStyle.fontSize || '10px'} ${cellStyle.fontFamily || 'Arial'}`
+            context.textBaseline = 'middle'
+            context.fillText(cell.textContent, cellRect.x + 7, cellRect.y + cellRect.height / 2, Math.max(0, cellRect.width - 14))
+            context.strokeStyle = colors.preset === 'dark-analytics' ? '#385B43' : '#E1EFE5'
+            context.beginPath()
+            context.moveTo(cellRect.x, cellRect.y + cellRect.height)
+            context.lineTo(cellRect.x + cellRect.width, cellRect.y + cellRect.height)
+            context.stroke()
+          }
+        }
+      }
+    } else if (component.type === 'image') {
+      const imageElement = card.querySelector('.dashboard-image')
+      if (imageElement) {
+        const imageRect = relativeRect(imageElement)
+        const image = await loadImage(imageElement.currentSrc || imageElement.src)
+        context.drawImage(image, imageRect.x, imageRect.y, imageRect.width, imageRect.height)
+      }
+    } else if (component.type === 'divider') {
+      const divider = card.querySelector('.dashboard-divider')
+      const rect = relativeRect(divider)
+      context.strokeStyle = colors.textColor
+      context.beginPath()
+      context.moveTo(rect.x, rect.y + rect.height / 2)
+      context.lineTo(rect.x + rect.width, rect.y + rect.height / 2)
+      context.stroke()
+    } else {
+      const textElement = card.querySelector('.dashboard-rich-text, .dashboard-filter-preview, .dashboard-empty')
+      if (textElement) {
+        const rect = relativeRect(textElement)
+        const style = getComputedStyle(textElement)
+        context.fillStyle = style.color || colors.secondaryColor
+        context.font = `${style.fontWeight || 400} ${style.fontSize || '12px'} ${style.fontFamily || 'Arial'}`
+        context.textBaseline = 'top'
+        drawWrappedText(context, textElement.innerText || textElement.textContent, rect.x, rect.y, rect.width, 18)
+      }
+    }
+    context.restore()
+    context.restore()
+    context.restore()
+  }
+  return new Promise((resolve, reject) => {
+    output.toBlob((blob) => blob ? resolve(blob) : reject(new Error('The browser could not encode the dashboard PNG.')), 'image/png')
+  })
+}
+
 async function downloadPNG() {
   const canvas = document.getElementById('dashboard-canvas')
-  if (!globalThis.htmlToImage?.toPng) throw new Error('PNG export is unavailable. Restart the application to load its export library.')
   if (!state.dashboard.dataset_id || !state.rows.length) {
     showToast('Choose a dataset with preview rows before exporting.', 'error')
     return
   }
-  state.charts.forEach((chart) => chart.resize())
+  await saveDashboard()
+  document.body.classList.add('dashboard-exporting')
   canvas.classList.add('exporting')
   try {
-    const dataUrl = await globalThis.htmlToImage.toPng(canvas, {
-      pixelRatio: 2,
-      cacheBust: true,
-      backgroundColor: '#FFFFFF',
-      skipFonts: true,
-      width: canvas.scrollWidth,
-      height: canvas.scrollHeight,
-      style: { transform: 'none', margin: '0' },
-    })
+    state.charts.forEach((chart) => chart.resize())
+    await document.fonts?.ready
+    await Promise.all([...canvas.querySelectorAll('img')].map((image) => image.decode().catch(() => {
+      throw new Error(`Dashboard image "${image.alt || 'image'}" could not be decoded for export.`)
+    })))
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+    state.charts.forEach((chart) => chart.resize())
+    const blob = await createDashboardPNG()
     const link = document.createElement('a')
-    link.download = `${(state.dashboard.name || 'dashboard').replace(/[^\w.-]+/g, '-')}.png`
-    link.href = dataUrl
+    link.download = `${(state.dashboard.name || 'dashboard').normalize('NFKD').replace(/[^\w.-]+/g, '_').replace(/^_+|_+$/g, '') || 'Dashboard'}.png`
+    link.href = URL.createObjectURL(blob)
+    link.style.position = 'fixed'
+    link.style.left = '-10000px'
+    document.body.append(link)
     link.click()
+    link.remove()
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 5000)
     showToast('PNG dashboard downloaded.')
   } finally {
     canvas.classList.remove('exporting')
+    document.body.classList.remove('dashboard-exporting')
+    requestAnimationFrame(() => state.charts.forEach((chart) => chart.resize()))
   }
 }
 
@@ -1348,9 +2245,58 @@ function togglePreview() {
   const button = document.getElementById('designer-preview-toggle')
   const preview = !layout.classList.contains('preview-mode')
   layout.classList.toggle('preview-mode', preview)
-  document.body.classList.toggle('dashboard-presentation', preview)
+  document.body.classList.toggle('dashboard-preview', preview)
   button.innerHTML = preview ? '<i class="bi bi-pencil"></i> Edit Dashboard' : '<i class="bi bi-easel"></i> Preview Dashboard'
+  document.getElementById('dashboard-focus-preview').innerHTML = preview
+    ? '<i class="bi bi-pencil"></i><span>Edit Dashboard</span>'
+    : '<i class="bi bi-easel"></i><span>Preview Dashboard</span>'
   if (preview) document.getElementById('dashboard-report-date').textContent = new Date().toLocaleDateString()
+  requestAnimationFrame(() => state.charts.forEach((chart) => chart.resize()))
+}
+
+async function setDashboardFocus(enabled) {
+  document.body.classList.toggle('dashboard-focus-mode', enabled)
+  if (enabled) {
+    document.getElementById('dashboard-focus-title').textContent = state.dashboard.name || 'Untitled dashboard'
+    requestAnimationFrame(() => state.charts.forEach((chart) => chart.resize()))
+    if (document.fullscreenEnabled && !document.fullscreenElement) {
+      try {
+        await document.documentElement.requestFullscreen()
+      } catch {
+        showToast('Dashboard focus mode is active without browser fullscreen.', 'error')
+      }
+    }
+    return
+  }
+  if (document.fullscreenElement && document.exitFullscreen) {
+    try {
+      await document.exitFullscreen()
+    } catch {
+      showToast('Could not exit browser fullscreen. Dashboard focus mode was closed.', 'error')
+    }
+  }
+  requestAnimationFrame(() => state.charts.forEach((chart) => chart.resize()))
+}
+
+async function setPresentationMode(enabled) {
+  document.body.classList.toggle('dashboard-presentation', enabled)
+  document.getElementById('designer-exit-presentation').hidden = !enabled
+  document.getElementById('designer-presentation').innerHTML = enabled
+    ? '<i class="bi bi-pencil"></i> Edit Mode'
+    : '<i class="bi bi-fullscreen"></i> View Dashboard'
+  if (enabled && document.fullscreenEnabled && !document.fullscreenElement) {
+    try {
+      await document.documentElement.requestFullscreen()
+    } catch (error) {
+      showToast(`Presentation mode is active, but fullscreen could not be started: ${error.message}`, 'error')
+    }
+  } else if (!enabled && document.fullscreenElement) {
+    try {
+      await document.exitFullscreen()
+    } catch (error) {
+      showToast(`Fullscreen could not be exited: ${error.message}`, 'error')
+    }
+  }
   requestAnimationFrame(() => state.charts.forEach((chart) => chart.resize()))
 }
 
@@ -1358,10 +2304,14 @@ async function historyAction(direction) {
   const from = direction === 'undo' ? state.undo : state.redo
   const to = direction === 'undo' ? state.redo : state.undo
   if (!from.length) return
+  const undo = state.undo
+  const redo = state.redo
   const previousDatasetId = state.dashboard.dataset_id
   to.push(JSON.stringify(state.dashboard))
   const value = from.pop()
   installDashboard(JSON.parse(value))
+  state.undo = undo
+  state.redo = redo
   document.getElementById('designer-dataset').value = state.dashboard.dataset_id || ''
   state.dataset = state.datasets.find((item) => (item.file_id || item.dataset_id || item.id) === state.dashboard.dataset_id) || null
   updateHistoryButtons()
@@ -1380,6 +2330,60 @@ async function historyAction(direction) {
 }
 
 export function initDashboardDesigner() {
+  applyTheme()
+  document.getElementById('designer-focus-toggle').addEventListener('click', () => {
+    setDashboardFocus(true).catch((error) => showToast(error.message || 'Dashboard focus mode could not be opened.', 'error'))
+  })
+  document.getElementById('dashboard-focus-exit').addEventListener('click', () => {
+    setDashboardFocus(false).catch((error) => showToast(error.message || 'Dashboard focus mode could not be closed.', 'error'))
+  })
+  document.querySelectorAll('[data-focus-add]').forEach((button) => {
+    button.addEventListener('click', () => addComponent(button.dataset.focusAdd))
+  })
+  document.getElementById('dashboard-focus-undo').addEventListener('click', () => historyAction('undo').catch((error) => showToast(error.message || 'Undo failed.', 'error')))
+  document.getElementById('dashboard-focus-redo').addEventListener('click', () => historyAction('redo').catch((error) => showToast(error.message || 'Redo failed.', 'error')))
+  document.getElementById('dashboard-focus-save').addEventListener('click', () => saveDashboard().catch((error) => showToast(error.message || 'Dashboard could not be saved.', 'error')))
+  document.getElementById('dashboard-focus-preview').addEventListener('click', togglePreview)
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && document.body.classList.contains('dashboard-focus-mode')) {
+      document.body.classList.remove('dashboard-focus-mode')
+      requestAnimationFrame(() => state.charts.forEach((chart) => chart.resize()))
+    }
+  })
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && document.body.classList.contains('dashboard-focus-mode') && !document.fullscreenElement) {
+      setDashboardFocus(false).catch((error) => showToast(error.message || 'Dashboard focus mode could not be closed.', 'error'))
+    }
+  })
+  document.addEventListener('pointermove', handleComponentPointerMove)
+  document.addEventListener('pointerup', handleComponentPointerEnd)
+  document.addEventListener('pointercancel', handleComponentPointerEnd)
+  document.getElementById('designer-canvas-settings').addEventListener('click', openCanvasSettings)
+  document.getElementById('designer-auto-arrange').addEventListener('click', autoArrange)
+  document.getElementById('designer-presentation').addEventListener('click', () => {
+    setPresentationMode(!document.body.classList.contains('dashboard-presentation'))
+      .catch((error) => showToast(error.message || 'Presentation mode could not be changed.', 'error'))
+  })
+  document.getElementById('designer-exit-presentation').addEventListener('click', () => {
+    setPresentationMode(false).catch((error) => showToast(error.message || 'Presentation mode could not be closed.', 'error'))
+  })
+  document.getElementById('canvas-settings-apply').addEventListener('click', applyCanvasSettings)
+  document.getElementById('canvas-preset-grid').addEventListener('click', (event) => {
+    const preset = event.target.closest('[data-canvas-preset]')?.dataset.canvasPreset
+    if (preset) setCanvasPreset(preset)
+  })
+  document.getElementById('canvas-dimensions').addEventListener('change', (event) => {
+    const dimensions = canvasDimensions[event.target.value]
+    const custom = event.target.value === 'custom'
+    const width = document.getElementById('canvas-width')
+    const height = document.getElementById('canvas-height')
+    width.disabled = !custom
+    height.disabled = !custom
+    if (dimensions) {
+      width.value = dimensions[0]
+      height.value = dimensions[1]
+    }
+  })
   document.getElementById('designer-dataset').addEventListener('change', async (event) => {
     try { await selectDataset(event.target.value) } catch (error) { showToast(error.message || 'Could not load this dataset.', 'error') }
   })
@@ -1391,6 +2395,7 @@ export function initDashboardDesigner() {
   document.getElementById('designer-name').addEventListener('input', (event) => {
     state.dashboard.name = event.target.value
     document.getElementById('dashboard-report-title').textContent = event.target.value
+    document.getElementById('dashboard-focus-title').textContent = event.target.value || 'Untitled dashboard'
     setStatus('Unsaved changes')
   })
   document.getElementById('designer-name').addEventListener('change', () => renderConfig())
@@ -1431,6 +2436,39 @@ export function initDashboardDesigner() {
   document.getElementById('designer-duplicate').addEventListener('click', () => duplicateDashboard().catch((error) => showToast(error.message || 'Dashboard could not be duplicated.', 'error')))
   document.getElementById('designer-preview-toggle').addEventListener('click', togglePreview)
   document.getElementById('designer-download').addEventListener('click', () => downloadPNG().catch((error) => showToast(error.message || 'PNG export failed.', 'error')))
+  document.getElementById('saved-dashboard-list').addEventListener('change', (event) => {
+    const checkbox = event.target.closest('[data-select-dashboard]')
+    if (!checkbox) return
+    if (checkbox.checked) state.selectedDashboardIds.add(checkbox.dataset.selectDashboard)
+    else state.selectedDashboardIds.delete(checkbox.dataset.selectDashboard)
+    renderSavedDashboards()
+  })
+  document.getElementById('dashboard-select-all').addEventListener('change', (event) => {
+    state.selectedDashboardIds.clear()
+    if (event.target.checked) {
+      state.saved.forEach((dashboard) => state.selectedDashboardIds.add(dashboard.id || dashboard.dashboard_id))
+    }
+    renderSavedDashboards()
+  })
+  document.getElementById('dashboard-delete-selected').addEventListener('click', () => {
+    deleteDashboards([...state.selectedDashboardIds]).catch((error) => showToast(error.message || 'Selected dashboards could not be deleted.', 'error'))
+  })
+  document.getElementById('dashboard-clear-all').addEventListener('click', () => {
+    deleteDashboards(state.saved.map((dashboard) => dashboard.id || dashboard.dashboard_id))
+      .catch((error) => showToast(error.message || 'Dashboards could not be deleted.', 'error'))
+  })
+  document.getElementById('saved-dashboard-list').addEventListener('click', (event) => {
+    const openButton = event.target.closest('[data-open-saved-dashboard]')
+    if (openButton) {
+      openSavedDashboard(openButton.dataset.openSavedDashboard).catch((error) => showToast(error.message || 'Dashboard could not be opened.', 'error'))
+      return
+    }
+    const deleteButton = event.target.closest('[data-delete-saved-dashboard]')
+    if (deleteButton) {
+      deleteDashboards([deleteButton.dataset.deleteSavedDashboard])
+        .catch((error) => showToast(error.message || 'Dashboard could not be deleted.', 'error'))
+    }
+  })
   window.addEventListener('app:pagechange', async (event) => {
     if (event.detail.page !== 'dashboard-designer') return
     try {
@@ -1438,7 +2476,34 @@ export function initDashboardDesigner() {
       if (state.dashboard.dataset_id) await refreshData()
     } catch (error) { showToast(error.message || 'Dashboard Designer could not load its data.', 'error') }
   })
-  window.addEventListener('resize', () => state.charts.forEach((chart) => chart.resize()))
+  window.addEventListener('resize', () => state.charts.forEach((chart, id) => {
+    const component = state.dashboard.components.find((item) => item.id === id)
+    if (component?.config.responsive !== false) chart.resize()
+  }))
+  window.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && document.body.classList.contains('dashboard-focus-mode') && !document.fullscreenElement) {
+      setDashboardFocus(false).catch((error) => showToast(error.message || 'Dashboard focus mode could not be closed.', 'error'))
+    }
+    if (event.key === 'Escape' && document.body.classList.contains('dashboard-presentation')) {
+      setPresentationMode(false).catch((error) => showToast(error.message || 'Presentation mode could not be closed.', 'error'))
+    }
+  })
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && document.body.classList.contains('dashboard-focus-mode')) {
+      document.body.classList.remove('dashboard-focus-mode')
+      requestAnimationFrame(() => state.charts.forEach((chart) => chart.resize()))
+    }
+    if (!document.fullscreenElement && document.body.classList.contains('dashboard-presentation')) {
+      document.body.classList.remove('dashboard-presentation')
+      document.getElementById('designer-exit-presentation').hidden = true
+      document.getElementById('designer-presentation').innerHTML = '<i class="bi bi-fullscreen"></i> View Dashboard'
+      requestAnimationFrame(() => state.charts.forEach((chart) => chart.resize()))
+    }
+  })
+  window.addEventListener('app:appearance-change', () => {
+    applyTheme()
+    renderComponents()
+  })
   loadDatasets().catch((error) => showToast(error.message || 'Could not load datasets.', 'error'))
   loadSavedDashboards().catch((error) => showToast(error.message || 'Could not load saved dashboards.', 'error'))
   setInterval(() => {
