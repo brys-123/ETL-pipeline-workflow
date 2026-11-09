@@ -174,9 +174,40 @@ def delete_dashboard(dashboard_id: str):
         return jsonify({"error": "Dashboard identifier is invalid."}), 400
     try:
         deleted = MetadataService(storage).delete_dashboard(dashboard_id)
-    except (OSError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         current_app.logger.exception("Dashboard deletion failed for %s: %s", dashboard_id, exc)
         return jsonify({"error": "The dashboard could not be deleted."}), 500
     if not deleted:
         return jsonify({"error": "Dashboard not found."}), 404
     return jsonify({"deleted": True, "dashboard_id": dashboard_id})
+
+
+@dashboards_blueprint.post("/dashboards/delete-selected")
+def delete_selected_dashboards():
+    payload = request.get_json(silent=True) or {}
+    dashboard_ids = payload.get("dashboard_ids")
+    if not isinstance(dashboard_ids, list) or not dashboard_ids or len(dashboard_ids) > 500:
+        return jsonify({"error": "Select between 1 and 500 dashboards to delete."}), 400
+    storage = current_app.extensions["etl_storage"]
+    if any(not isinstance(dashboard_id, str) or not storage.file_id_is_valid(dashboard_id) for dashboard_id in dashboard_ids):
+        return jsonify({"error": "One or more dashboard identifiers are invalid."}), 400
+    metadata = MetadataService(storage)
+    deleted = []
+    failed = []
+    for dashboard_id in dict.fromkeys(dashboard_ids):
+        try:
+            if metadata.delete_dashboard(dashboard_id):
+                deleted.append({"dashboard_id": dashboard_id})
+            else:
+                failed.append({"dashboard_id": dashboard_id, "error": "Dashboard not found."})
+        except (OSError, RuntimeError, ValueError) as exc:
+            current_app.logger.exception("Dashboard deletion failed for %s: %s", dashboard_id, exc)
+            failed.append({"dashboard_id": dashboard_id, "error": "The dashboard could not be deleted."})
+    current_app.logger.info("Deleted %s dashboard definition(s); referenced datasets were retained.", len(deleted))
+    return jsonify({
+        "deleted": deleted,
+        "failed": failed,
+        "deleted_count": len(deleted),
+        "partial": bool(failed),
+        "datasets_preserved": True,
+    })

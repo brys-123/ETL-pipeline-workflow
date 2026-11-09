@@ -16,6 +16,8 @@
     <link href="/css/style.css" rel="stylesheet" />
     <link href="/css/workflow.css" rel="stylesheet" />
     <link href="/css/dashboard-designer.css" rel="stylesheet" />
+    <link href="/css/storage-settings.css" rel="stylesheet" />
+    <link href="/css/appearance.css" rel="stylesheet" />
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to main content</a>
@@ -41,7 +43,7 @@
         </nav>
         <div class="sidebar-bottom">
           <div class="storage-status"><span class="connection-dot"></span><span><strong>Local storage</strong><small>Files stay on this machine</small></span></div>
-          <div class="sidebar-profile"><span class="profile-avatar">S</span><span><strong>Studio workspace</strong><small>Local ETL</small></span><i class="bi bi-three-dots"></i></div>
+          <button class="sidebar-profile" id="sidebar-profile-button" type="button" aria-label="Open account menu"><span class="profile-avatar" id="sidebar-profile-avatar">S</span><span><strong id="sidebar-profile-name">Studio workspace</strong><small id="sidebar-profile-role">User account</small></span><i class="bi bi-three-dots"></i></button>
         </div>
       </aside>
 
@@ -53,7 +55,7 @@
             <label class="global-search"><i class="bi bi-search"></i><input id="global-search" type="search" placeholder="Search files and workflows" aria-label="Search files and workflows" /><kbd>Ctrl K</kbd></label>
             <button class="top-icon" id="notification-button" aria-label="Notifications" title="Notifications"><i class="bi bi-bell"></i><span></span></button>
             <span class="top-divider"></span>
-            <button class="top-profile" id="profile-button" title="Simple ETL Studio"><span>SE</span><i class="bi bi-chevron-down"></i></button>
+            <button class="top-profile" id="profile-button" title="Open account menu"><span id="top-profile-avatar">SE</span><i class="bi bi-chevron-down"></i></button>
           </div>
         </header>
 
@@ -82,8 +84,14 @@
               </section>
             </div>
             <section class="surface-panel recent-workflows">
-              <div class="panel-title-row"><div><h2>Saved workflows</h2><p>Workflow structures saved in your local storage</p></div><button class="button-secondary button-sm" data-page="workflow"><i class="bi bi-plus-lg"></i> New workflow</button></div>
-              <div class="table-responsive"><table class="studio-table"><thead><tr><th>Workflow</th><th>Nodes</th><th>Last updated</th><th></th></tr></thead><tbody id="recent-workflows-body"><tr><td class="table-empty" colspan="4">No workflows saved. Create a workflow to get started.</td></tr></tbody></table></div>
+              <div class="panel-title-row"><div><h2>Saved workflows</h2><p>Workflow structures saved in your active metadata storage</p></div><button class="button-secondary button-sm" data-page="workflow"><i class="bi bi-plus-lg"></i> New workflow</button></div>
+              <div class="delete-toolbar">
+                <label><input id="workflow-select-all" type="checkbox" aria-label="Select all saved workflows" /> Select all</label>
+                <span id="workflow-selected-count">0 selected</span>
+                <button class="button-secondary button-sm" id="workflow-delete-selected" type="button" disabled><i class="bi bi-trash3"></i> Delete selected</button>
+                <button class="button-secondary button-sm danger-action" id="workflow-clear-all" type="button"><i class="bi bi-trash3"></i> Clear all</button>
+              </div>
+              <div class="table-responsive"><table class="studio-table"><thead><tr><th><span class="visually-hidden">Select</span></th><th>Workflow</th><th>Nodes</th><th>Last updated</th><th><span class="visually-hidden">Actions</span></th></tr></thead><tbody id="recent-workflows-body"><tr><td class="table-empty" colspan="5">No workflows saved. Create a workflow to get started.</td></tr></tbody></table></div>
             </section>
           </section>
 
@@ -105,11 +113,36 @@
                 <button class="button-secondary button-sm" id="designer-open" type="button"><i class="bi bi-folder2-open"></i> Open</button>
                 <button class="toolbar-button" id="designer-duplicate" type="button" title="Duplicate dashboard"><i class="bi bi-copy"></i><span>Duplicate</span></button>
                 <button class="toolbar-button" id="designer-delete" type="button" title="Delete dashboard"><i class="bi bi-trash3"></i></button>
+                <button class="button-secondary button-sm" id="designer-canvas-settings" type="button"><i class="bi bi-palette"></i> Canvas &amp; Appearance</button>
+                <button class="button-secondary button-sm" id="designer-auto-arrange" type="button" title="Replace component sizes with a compact balanced layout"><i class="bi bi-grid-3x3"></i> Auto Arrange</button>
                 <button class="button-secondary button-sm" id="designer-preview-toggle" type="button"><i class="bi bi-easel"></i> Preview Dashboard</button>
+                <button class="button-secondary button-sm" id="designer-presentation" type="button"><i class="bi bi-fullscreen"></i> View Dashboard</button>
+                <button class="button-secondary button-sm" id="designer-focus-toggle" type="button"><i class="bi bi-arrows-fullscreen"></i> Expand Dashboard Canvas</button>
                 <button class="button-primary button-sm" id="designer-save" type="button"><i class="bi bi-floppy"></i> Save Dashboard</button>
                 <button class="button-primary button-sm" id="designer-download" type="button"><i class="bi bi-download"></i> Download PNG</button>
               </div>
             </header>
+            <div class="focus-toolbar dashboard-focus-toolbar" id="dashboard-focus-toolbar" aria-label="Dashboard focus controls">
+              <button type="button" class="focus-exit" id="dashboard-focus-exit"><i class="bi bi-fullscreen-exit"></i><span>Back to Normal Mode</span></button>
+              <strong class="focus-title" id="dashboard-focus-title">Untitled dashboard</strong>
+              <button type="button" data-focus-add="bar"><i class="bi bi-bar-chart"></i><span>Add Chart</span></button>
+              <button type="button" data-focus-add="kpi"><i class="bi bi-speedometer2"></i><span>Add KPI</span></button>
+              <button type="button" data-focus-add="table"><i class="bi bi-table"></i><span>Add Table</span></button>
+              <button type="button" id="dashboard-focus-undo" title="Undo"><i class="bi bi-arrow-counterclockwise"></i><span>Undo</span></button>
+              <button type="button" id="dashboard-focus-redo" title="Redo"><i class="bi bi-arrow-clockwise"></i><span>Redo</span></button>
+              <button type="button" id="dashboard-focus-save"><i class="bi bi-floppy"></i><span>Save Dashboard</span></button>
+              <button type="button" id="dashboard-focus-preview"><i class="bi bi-easel"></i><span>Preview Dashboard</span></button>
+            </div>
+            <section class="surface-panel saved-dashboard-manager" aria-labelledby="saved-dashboard-title">
+              <div class="panel-title-row"><div><h2 id="saved-dashboard-title">Saved dashboards</h2><p>Select dashboards to permanently remove their definitions. Their datasets are kept.</p></div></div>
+              <div class="delete-toolbar">
+                <label><input id="dashboard-select-all" type="checkbox" aria-label="Select all saved dashboards" /> Select all</label>
+                <span id="dashboard-selected-count">0 selected</span>
+                <button class="button-secondary button-sm" id="dashboard-delete-selected" type="button" disabled><i class="bi bi-trash3"></i> Delete selected</button>
+                <button class="button-secondary button-sm danger-action" id="dashboard-clear-all" type="button"><i class="bi bi-trash3"></i> Clear all</button>
+              </div>
+              <div id="saved-dashboard-list" class="saved-dashboard-list" aria-live="polite"><p class="empty-inline">Loading saved dashboards…</p></div>
+            </section>
             <input id="designer-file-input" type="file" accept=".csv,.xlsx,.json" hidden />
             <div class="designer-layout">
               <aside class="designer-library surface-panel" aria-label="Dashboard components">
@@ -165,6 +198,19 @@
               </aside>
             </div>
           </section>
+          <button class="presentation-exit" id="designer-exit-presentation" type="button"><i class="bi bi-fullscreen-exit"></i> Exit Presentation</button>
+          <dialog class="canvas-settings-dialog" id="canvas-settings-dialog" aria-labelledby="canvas-settings-title">
+            <form method="dialog" id="canvas-settings-form">
+              <header class="canvas-settings-header"><div><p class="section-overline">DASHBOARD WORKSPACE</p><h2 id="canvas-settings-title">Canvas &amp; Appearance</h2><p>Choose a visual style, then adjust dimensions and spacing.</p></div><button class="preview-close" value="cancel" aria-label="Close canvas settings"><i class="bi bi-x-lg"></i></button></header>
+              <div class="canvas-settings-body">
+                <section><h3>Canvas preset</h3><div class="canvas-preset-grid" id="canvas-preset-grid"></div></section>
+                <section><h3>Canvas dimensions</h3><label class="designer-config-field">Size<select id="canvas-dimensions"><option value="standard">Standard Desktop · 1440 × 900</option><option value="widescreen">Widescreen · 1920 × 1080</option><option value="presentation">Presentation · 16:9</option><option value="a4-landscape">A4 Landscape</option><option value="a4-portrait">A4 Portrait</option><option value="custom">Custom Canvas</option></select></label><div class="canvas-size-fields"><label class="designer-config-field">Width (px)<input id="canvas-width" type="number" min="320" max="5000"></label><label class="designer-config-field">Height (px)<input id="canvas-height" type="number" min="320" max="5000"></label></div></section>
+                <section><h3>Canvas styling</h3><div class="canvas-size-fields"><label class="designer-config-field">Background<input id="canvas-background" type="color"></label><label class="designer-config-field">Background style<select id="canvas-background-style"><option value="solid">Solid</option><option value="soft-gradient">Soft diagonal gradient</option><option value="horizontal-gradient">Horizontal gradient</option><option value="radial-gradient">Radial glow</option></select></label><label class="designer-config-field">Outer padding (px)<input id="canvas-padding" type="number" min="0" max="100"></label><label class="designer-config-field">Card spacing (px)<input id="canvas-gap" type="number" min="0" max="60"></label><label class="designer-config-field">Card radius (px)<input id="canvas-radius" type="number" min="0" max="40"></label><label class="designer-config-field">Alignment<select id="canvas-alignment"><option value="left">Left</option><option value="center">Center</option><option value="right">Right</option></select></label></div><label class="designer-config-field canvas-check"><input id="canvas-shadows" type="checkbox"> Card shadows</label><label class="designer-config-field canvas-check"><input id="canvas-grid" type="checkbox"> Show editor grid</label></section>
+                <section><h3>Report colors</h3><div class="canvas-size-fields"><label class="designer-config-field">Card background<input id="canvas-card-background" type="color"></label><label class="designer-config-field">Main text<input id="canvas-text-color" type="color"></label><label class="designer-config-field">Secondary text<input id="canvas-secondary-color" type="color"></label></div></section>
+              </div>
+              <footer class="canvas-settings-footer"><button class="button-secondary" value="cancel">Cancel</button><button class="button-primary" id="canvas-settings-apply" type="button"><i class="bi bi-check2"></i> Apply Canvas</button></footer>
+            </form>
+          </dialog>
 
           <section class="page-view" id="page-workflow" aria-labelledby="workflow-page-title" hidden>
             <div class="workflow-header">
@@ -178,7 +224,20 @@
                 <button class="toolbar-button" id="clear-canvas" title="Clear canvas"><i class="bi bi-trash3"></i><span>Clear</span></button>
                 <button class="button-primary button-sm" id="run-workflow" type="button"><i class="bi bi-play-fill"></i> Run workflow</button>
                 <button class="button-primary button-sm" id="save-workflow"><i class="bi bi-floppy"></i> Save</button>
+                <button class="button-secondary button-sm" id="workflow-focus-toggle" type="button"><i class="bi bi-arrows-fullscreen"></i> Expand Canvas / Large Screen</button>
               </div>
+            </div>
+            <div class="focus-toolbar workflow-focus-toolbar" id="workflow-focus-toolbar" aria-label="Workflow focus controls">
+              <button type="button" class="focus-exit" id="workflow-focus-exit"><i class="bi bi-fullscreen-exit"></i><span>Back to Normal Mode</span></button>
+              <input id="workflow-focus-name" aria-label="Workflow name" maxlength="120" />
+              <select id="workflow-focus-node-type" aria-label="Node type"></select>
+              <button type="button" id="workflow-focus-add-node"><i class="bi bi-plus-lg"></i><span>Add Node</span></button>
+              <button type="button" id="workflow-focus-zoom-out" title="Zoom out"><i class="bi bi-dash-lg"></i></button>
+              <button type="button" id="workflow-focus-zoom-in" title="Zoom in"><i class="bi bi-plus-lg"></i></button>
+              <button type="button" id="workflow-focus-fit"><i class="bi bi-fullscreen"></i><span>Fit to Screen</span></button>
+              <button type="button" id="workflow-focus-reset"><i class="bi bi-arrow-counterclockwise"></i><span>Reset View</span></button>
+              <button type="button" id="workflow-focus-save"><i class="bi bi-floppy"></i><span>Save Workflow</span></button>
+              <button type="button" id="workflow-focus-run"><i class="bi bi-play-fill"></i><span>Run Workflow</span></button>
             </div>
             <section id="workflow-run-feedback" class="workflow-run-feedback" aria-live="polite" hidden></section>
             <div class="builder-shell">
@@ -186,10 +245,15 @@
                 <div class="builder-panel-heading"><span class="section-overline">PALETTE</span><h2>Node library</h2><p>Drag a node onto the canvas.</p></div>
                 <label class="node-search"><i class="bi bi-search" aria-hidden="true"></i><span class="visually-hidden">Search workflow nodes</span><input id="node-search" type="search" placeholder="Search nodes" autocomplete="off" /></label>
                 <p class="node-search-empty" id="node-search-empty" hidden>No nodes match this search.</p>
+<<<<<<< HEAD
                 <div class="node-group"><h3>FILE SOURCES</h3><button class="palette-node" draggable="true" data-node-type="csv_input"><span class="node-type-icon input"><i class="bi bi-filetype-csv"></i></span><span><strong>CSV Input</strong><small>Read a CSV dataset</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="excel_input"><span class="node-type-icon input"><i class="bi bi-file-earmark-spreadsheet"></i></span><span><strong>Excel Input</strong><small>Read an XLSX workbook</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="json_input"><span class="node-type-icon input"><i class="bi bi-braces"></i></span><span><strong>JSON Input</strong><small>Read a JSON dataset</small></span><i class="bi bi-grip-vertical drag-grip"></i></button></div>
                 <div class="node-group"><h3>DATABASE SOURCES</h3><button class="palette-node" draggable="true" data-node-type="mysql_input"><span class="node-type-icon input"><i class="bi bi-database"></i></span><span><strong>MySQL Input</strong><small>Read a database table or SELECT</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="postgresql_input"><span class="node-type-icon input"><i class="bi bi-database"></i></span><span><strong>PostgreSQL Input</strong><small>Read a database table or SELECT</small></span><i class="bi bi-grip-vertical drag-grip"></i></button></div>
                 <div class="node-group"><h3>API SOURCES</h3><button class="palette-node" draggable="true" data-node-type="api_input"><span class="node-type-icon input"><i class="bi bi-cloud-arrow-down"></i></span><span><strong>REST API Input</strong><small>Read a JSON or CSV endpoint</small></span><i class="bi bi-grip-vertical drag-grip"></i></button></div>
                 <div class="node-group"><h3>TRANSFORMATION</h3><button class="palette-node" draggable="true" data-node-type="clean_data"><span class="node-type-icon transform"><i class="bi bi-magic"></i></span><span><strong>Clean Data</strong><small>Prepare inconsistent values</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="remove_duplicates"><span class="node-type-icon transform"><i class="bi bi-copy"></i></span><span><strong>Remove Duplicates</strong><small>Identify repeated rows</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="filter_rows"><span class="node-type-icon transform"><i class="bi bi-funnel"></i></span><span><strong>Filter Rows</strong><small>Keep matching records</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="select_columns"><span class="node-type-icon transform"><i class="bi bi-view-list"></i></span><span><strong>Select Columns</strong><small>Choose fields to keep</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="rename_columns"><span class="node-type-icon transform"><i class="bi bi-input-cursor-text"></i></span><span><strong>Rename Columns</strong><small>Change field labels</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="aggregate_data"><span class="node-type-icon transform"><i class="bi bi-bar-chart-steps"></i></span><span><strong>Aggregate Data</strong><small>Summarize selected values</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="merge_data"><span class="node-type-icon transform"><i class="bi bi-intersect"></i></span><span><strong>Merge Data</strong><small>Combine two datasets</small></span><i class="bi bi-grip-vertical drag-grip"></i></button></div>
+=======
+                <div class="node-group"><h3>INPUT</h3><button class="palette-node" draggable="true" data-node-type="csv_input"><span class="node-type-icon input"><i class="bi bi-filetype-csv"></i></span><span><strong>CSV Input</strong><small>Read a CSV dataset</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="excel_input"><span class="node-type-icon input"><i class="bi bi-file-earmark-spreadsheet"></i></span><span><strong>Excel Input</strong><small>Read an XLSX workbook</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="json_input"><span class="node-type-icon input"><i class="bi bi-braces"></i></span><span><strong>JSON Input</strong><small>Read a JSON dataset</small></span><i class="bi bi-grip-vertical drag-grip"></i></button></div>
+                <div class="node-group"><h3>TRANSFORMATION</h3><button class="palette-node" draggable="true" data-node-type="clean_data"><span class="node-type-icon transform"><i class="bi bi-magic"></i></span><span><strong>Clean Data</strong><small>Prepare inconsistent values</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="remove_duplicates"><span class="node-type-icon transform"><i class="bi bi-copy"></i></span><span><strong>Remove Duplicates</strong><small>Identify repeated rows</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="filter_rows"><span class="node-type-icon transform"><i class="bi bi-funnel"></i></span><span><strong>Filter Rows</strong><small>Keep matching records</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="select_columns"><span class="node-type-icon transform"><i class="bi bi-view-list"></i></span><span><strong>Select Columns</strong><small>Choose fields to keep</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="rename_columns"><span class="node-type-icon transform"><i class="bi bi-input-cursor-text"></i></span><span><strong>Rename Columns</strong><small>Change field labels</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="aggregate_data"><span class="node-type-icon transform"><i class="bi bi-bar-chart-steps"></i></span><span><strong>Aggregate Data</strong><small>Summarize selected values</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="statistical_summary"><span class="node-type-icon transform"><i class="bi bi-clipboard-data"></i></span><span><strong>Statistical Summary</strong><small>Analyze numeric and categorical data</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="merge_data"><span class="node-type-icon transform"><i class="bi bi-intersect"></i></span><span><strong>Merge Data</strong><small>Combine two datasets</small></span><i class="bi bi-grip-vertical drag-grip"></i></button></div>
+>>>>>>> cabfcff74dd1bdc17781142a1c5b05739a95b821
                 <div class="node-group"><h3>PREVIEW &amp; OUTPUT</h3><button class="palette-node" draggable="true" data-node-type="preview_data"><span class="node-type-icon preview"><i class="bi bi-eye"></i></span><span><strong>Preview Data</strong><small>Inspect data at this pipeline step</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="csv_output"><span class="node-type-icon output"><i class="bi bi-filetype-csv"></i></span><span><strong>CSV Output</strong><small>Export a CSV file</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="excel_output"><span class="node-type-icon output"><i class="bi bi-file-earmark-spreadsheet"></i></span><span><strong>Excel Output</strong><small>Export an XLSX file</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="json_output"><span class="node-type-icon output"><i class="bi bi-braces"></i></span><span><strong>JSON Output</strong><small>Export a JSON file</small></span><i class="bi bi-grip-vertical drag-grip"></i></button></div>
                 <div class="phase-note"><i class="bi bi-info-circle"></i><span>Connect configured inputs, transformations, and outputs before running this workflow.</span></div>
               </aside>
@@ -248,6 +312,7 @@
 
           <section class="page-view" id="page-settings" aria-labelledby="settings-title" hidden>
             <div class="page-heading-row"><div><p class="section-overline">APPLICATION</p><h1 id="settings-title">Settings</h1><p>Storage and upload settings for this local installation.</p></div></div>
+<<<<<<< HEAD
             <section class="storage-config-grid" aria-label="Storage configuration">
               <article class="surface-panel storage-section">
                 <div class="panel-title-row"><div><h2>File System</h2><p>Managed dataset files with JSON application records.</p></div><span class="storage-active-badge" id="storage-filesystem-active">Active</span></div>
@@ -293,6 +358,76 @@
                 <p class="storage-warning">Switching storage does not transfer records. Existing records remain in the storage system where they were created. PostgreSQL initialization creates schema only; it does not import File System records.</p>
                 <button class="button-secondary button-sm" id="refresh-storage-status" type="button"><i class="bi bi-arrow-clockwise"></i> Refresh status</button>
               </article>
+=======
+            <div class="storage-warning" id="storage-switch-warning" role="note"></div>
+            <section class="storage-overview-grid" aria-label="Storage status">
+              <article class="storage-overview-card"><span>Active backend</span><strong id="storage-active-mode">Checking…</strong><small id="storage-active-health">Checking storage health</small></article>
+              <article class="storage-overview-card"><span>PostgreSQL connection</span><strong id="storage-db-connection">Not tested</strong><small id="storage-db-name">Database not configured</small></article>
+              <article class="storage-overview-card"><span>Database schema</span><strong id="storage-schema-status">Not initialized</strong><small id="storage-schema-version">No schema version</small></article>
+              <article class="storage-overview-card"><span>Dataset records</span><strong id="storage-dataset-count">—</strong><small id="storage-upload-count">—</small></article>
+              <article class="storage-overview-card"><span>Other application records</span><strong id="storage-application-record-count">—</strong><small>Workflows, runs, and dashboards</small></article>
+            </section>
+            <div class="storage-settings-grid">
+              <section class="surface-panel storage-card" aria-labelledby="filesystem-storage-title">
+                <div class="storage-card-heading"><span class="settings-icon"><i class="bi bi-folder2-open"></i></span><div><p class="section-overline">LOCAL FILES</p><h2 id="filesystem-storage-title">File System</h2><p>Dataset files stay in managed storage. This is the default backend.</p></div><span class="storage-state" id="filesystem-state">Inactive</span></div>
+                <dl class="storage-details">
+                  <div><dt>Storage mode</dt><dd>File System</dd></div>
+                  <div><dt>Status</dt><dd id="filesystem-availability">Checking…</dd></div>
+                  <div><dt>Storage location</dt><dd id="filesystem-location">—</dd></div>
+                  <div><dt>Available storage</dt><dd id="filesystem-free-space">—</dd></div>
+                  <div><dt>Total files</dt><dd id="filesystem-total-count">—</dd></div>
+                  <div><dt>Uploaded files</dt><dd id="filesystem-files-count">—</dd></div>
+                  <div><dt>Processed datasets</dt><dd id="filesystem-processed-count">—</dd></div>
+                </dl>
+                <button class="button-secondary" id="activate-filesystem" type="button"><i class="bi bi-arrow-left-right"></i> Return to File System</button>
+              </section>
+              <section class="surface-panel storage-card" aria-labelledby="postgres-storage-title">
+                <div class="storage-card-heading"><span class="settings-icon"><i class="bi bi-database"></i></span><div><p class="section-overline">OPTIONAL DATABASE</p><h2 id="postgres-storage-title">PostgreSQL</h2><p>Store application records in PostgreSQL; dataset contents remain in managed files.</p></div><span class="storage-state" id="postgres-state">Inactive</span></div>
+                <form id="postgres-config-form" autocomplete="off">
+                  <div class="storage-form-grid">
+                    <label>Host<input name="host" type="text" value="localhost" maxlength="253" required /></label>
+                    <label>Port<input name="port" type="number" value="5432" min="1" max="65535" required /></label>
+                    <label>Database name<input name="database" type="text" value="simple_etl_studio_db" maxlength="63" required /></label>
+                    <label>Username<input name="username" type="text" value="postgres" maxlength="128" required /></label>
+                    <label class="storage-form-wide">Password<input name="password" type="password" autocomplete="new-password" placeholder="Enter to update saved password" maxlength="1024" /></label>
+                    <label class="storage-form-wide">Maintenance database<input name="maintenance_database" type="text" value="postgres" maxlength="63" required /></label>
+                  </div>
+                  <p class="storage-secret-note" id="postgres-secret-status">Password is never returned to the browser. Saved credentials use your operating system's credential store.</p>
+                  <div class="storage-action-row">
+                    <button class="button-secondary" id="test-postgres-connection" type="button"><i class="bi bi-plug"></i> Test Connection</button>
+                    <button class="button-secondary" id="save-postgres-config" type="submit"><i class="bi bi-save2"></i> Save Configuration</button>
+                    <button class="button-secondary" id="initialize-postgres" type="button"><i class="bi bi-database-gear"></i> Initialize Database</button>
+                    <button class="button-primary" id="activate-postgres" type="button"><i class="bi bi-check2-circle"></i> Activate PostgreSQL</button>
+                  </div>
+                  <p class="storage-secret-note" id="postgres-action-note" aria-live="polite"></p>
+                </form>
+                <div class="storage-result" id="postgres-result" role="status" aria-live="polite"></div>
+                <div class="storage-last-activity">
+                  <p>Last successful connection <strong id="postgres-last-connection">Never</strong></p>
+                  <p>Last initialization <strong id="postgres-last-initialization">Never</strong></p>
+                  <button class="subtle-link" id="remove-postgres-password" type="button">Remove saved password</button>
+                </div>
+              </section>
+            </div>
+            <section class="surface-panel settings-panel storage-upload-settings">
+              <div class="settings-row"><span class="settings-icon"><i class="bi bi-file-earmark-arrow-up"></i></span><span><strong>Maximum upload size</strong><small>Per uploaded dataset</small></span><b id="setting-upload-limit">100 MB</b></div>
+            </section>
+            <section class="surface-panel appearance-settings" aria-labelledby="appearance-title">
+              <div class="panel-title-row"><div><p class="section-overline">PERSONALIZATION</p><h2 id="appearance-title">Appearance &amp; Interface</h2><p>Changes apply immediately and are saved in this browser, independently of the active storage backend.</p></div></div>
+              <div class="appearance-settings-grid">
+                <label class="config-field"><span>Theme</span><select id="appearance-theme"><option value="light">Light Mode (Day)</option><option value="dark">Dark Mode (Night)</option><option value="system">System Default</option></select></label>
+                <label class="config-field"><span>Canvas background style</span><select id="appearance-canvas-style"><option value="dots">Soft dots</option><option value="grid">Grid</option><option value="plain">Plain</option></select></label>
+                <label class="config-field"><span>Canvas node appearance</span><select id="appearance-node-style"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
+                <label class="config-field"><span>Interface density</span><select id="appearance-density"><option value="comfortable">Comfortable</option><option value="compact">Compact</option></select></label>
+                <label class="config-field"><span>Canvas background contrast</span><select id="appearance-contrast"><option value="normal">Normal</option><option value="high">High</option></select></label>
+              </div>
+              <div class="appearance-toggles">
+                <label><input id="appearance-show-grid" type="checkbox" /> Show canvas grid</label>
+                <label><input id="appearance-snap-grid" type="checkbox" /> Snap nodes to grid</label>
+                <button class="button-secondary button-sm" id="appearance-reset" type="button"><i class="bi bi-arrow-counterclockwise"></i> Reset canvas appearance</button>
+              </div>
+              <p id="appearance-status" class="appearance-status" role="status" aria-live="polite"></p>
+>>>>>>> cabfcff74dd1bdc17781142a1c5b05739a95b821
             </section>
           </section>
         </div>
@@ -333,6 +468,34 @@
       <div class="preview-controls"><label class="table-search"><i class="bi bi-search"></i><input id="preview-search" type="search" placeholder="Search preview rows" aria-label="Search dataset rows" /></label><span id="preview-page-label"></span><button class="button-secondary button-sm" id="preview-previous" type="button">Previous</button><button class="button-secondary button-sm" id="preview-next" type="button">Next</button></div>
       <div class="data-preview-table-wrap" id="data-preview-table-wrap"></div>
       <p class="data-preview-note" id="data-preview-note"></p>
+    </dialog>
+
+    <dialog class="account-dialog" id="account-dialog" aria-labelledby="account-title">
+      <header class="account-dialog-header"><div><p class="section-overline">YOUR ACCOUNT</p><h2 id="account-title">Profile and settings</h2></div><button class="preview-close" id="account-close" type="button" aria-label="Close account settings"><i class="bi bi-x-lg"></i></button></header>
+      <div class="account-identity"><span class="account-avatar" id="account-avatar">U</span><div><strong id="account-full-name">Account</strong><small id="account-role">User</small></div></div>
+      <p class="account-meta" id="account-meta"></p>
+      <form id="account-profile-form" class="account-form">
+        <label for="account-username">Username</label><input id="account-username" readonly />
+        <label for="account-email">Email address</label><input id="account-email" type="email" autocomplete="email" required />
+        <label for="account-name">Full name</label><input id="account-name" autocomplete="name" maxlength="100" required />
+        <button class="button-primary" type="submit">Save profile</button>
+      </form>
+      <div class="account-form account-picture-form"><label for="account-picture-input">Profile picture</label><input id="account-picture-input" type="file" accept="image/png,image/jpeg,image/webp" /><button class="button-secondary" id="account-picture-save" type="button">Update picture</button></div>
+      <form id="account-password-form" class="account-form">
+        <h3>Change password</h3>
+        <label for="account-current-password">Current password</label><input id="account-current-password" type="password" autocomplete="current-password" required />
+        <label for="account-new-password">New password</label><input id="account-new-password" type="password" autocomplete="new-password" required />
+        <small>At least 12 characters with uppercase, lowercase, and a number.</small>
+        <label for="account-confirm-password">Confirm new password</label><input id="account-confirm-password" type="password" autocomplete="new-password" required />
+        <button class="button-secondary" type="submit">Update password</button>
+      </form>
+      <section class="admin-panel" id="admin-panel" hidden>
+        <h3>Administration</h3>
+        <div class="admin-section"><h4>Users</h4><div class="admin-table-wrap" id="admin-users"></div></div>
+        <div class="admin-section"><h4>Recent activity</h4><div class="admin-table-wrap" id="admin-activity"></div></div>
+        <div class="admin-section"><h4>Sessions</h4><div class="admin-table-wrap" id="admin-sessions"></div></div>
+      </section>
+      <footer class="account-dialog-footer"><button class="button-danger" id="account-logout" type="button"><i class="bi bi-box-arrow-right"></i> Log out</button></footer>
     </dialog>
 
     <script type="module" src="/js/app.js"></script>

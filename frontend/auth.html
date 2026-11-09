@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#164E38" />
+    <meta name="description" content="Sign in to Simple ETL Studio." />
+    <title>Sign in · Simple ETL Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+    <link href="/css/auth.css" rel="stylesheet" />
+    <script type="module" src="/js/auth.js"></script>
+  </head>
+  <body>
+    <main class="auth-page">
+      <section class="auth-brand" aria-label="Simple ETL Studio">
+        <a class="auth-logo" href="/login"><span class="auth-logo-mark">S</span><span>simple<span>etl</span><small>STUDIO</small></span></a>
+        <div class="brand-copy">
+          <p class="eyebrow">DATA WORKFLOWS, MADE CLEAR</p>
+          <h1>Turn your data into decisions.</h1>
+          <p>Bring datasets together, build repeatable workflows, and share dashboards in one secure workspace.</p>
+        </div>
+        <div class="brand-art" aria-hidden="true">
+          <div class="art-grid"></div>
+          <div class="art-card art-card-main"><span></span><i></i><b></b><small></small></div>
+          <div class="art-card art-card-side"><i></i><i></i><i></i><i></i><i></i></div>
+          <div class="art-dot"></div>
+        </div>
+        <p class="brand-footer">A calm space for better data work.</p>
+      </section>
+
+      <section class="auth-form-side">
+        <div class="auth-card">
+          <div class="mobile-logo auth-logo"><span class="auth-logo-mark">S</span><span>simple<span>etl</span><small>STUDIO</small></span></div>
+          <p class="eyebrow" id="auth-eyebrow">YOUR WORKSPACE</p>
+          <h2 id="auth-heading">Welcome back</h2>
+          <p class="auth-intro" id="auth-intro">Sign in to continue to Simple ETL Studio.</p>
+          <div class="auth-notice" id="auth-notice" role="alert" hidden></div>
+          <form id="login-form" novalidate>
+            <label for="login-identity">Username or email</label>
+            <input id="login-identity" name="identity" autocomplete="username" required />
+            <label for="login-password">Password</label>
+            <div class="password-input"><input id="login-password" name="password" type="password" autocomplete="current-password" required /><button class="password-toggle" type="button" data-toggle-password="login-password" aria-label="Show password">Show</button></div>
+            <label class="remember-row"><input type="checkbox" name="remember" /><span>Remember me</span></label>
+            <button class="auth-submit" type="submit"><span>Sign in</span><i aria-hidden="true">→</i></button>
+          </form>
+
+          <form id="signup-form" novalidate hidden>
+            <label for="signup-name">Full name</label>
+            <input id="signup-name" name="full_name" autocomplete="name" maxlength="100" required />
+            <label for="signup-username">Username</label>
+            <input id="signup-username" name="username" autocomplete="username" maxlength="32" required />
+            <label for="signup-email">Email address</label>
+            <input id="signup-email" name="email" type="email" autocomplete="email" maxlength="254" required />
+            <label for="signup-password">Password</label>
+            <div class="password-input"><input id="signup-password" name="password" type="password" autocomplete="new-password" required /><button class="password-toggle" type="button" data-toggle-password="signup-password" aria-label="Show password">Show</button></div>
+            <small class="password-hint">At least 12 characters with uppercase, lowercase, and a number.</small>
+            <label for="signup-confirm">Confirm password</label>
+            <div class="password-input"><input id="signup-confirm" name="confirm_password" type="password" autocomplete="new-password" required /><button class="password-toggle" type="button" data-toggle-password="signup-confirm" aria-label="Show password">Show</button></div>
+            <button class="auth-submit" type="submit"><span>Create account</span><i aria-hidden="true">→</i></button>
+          </form>
+
+          <p class="auth-switch" id="auth-switch">New to Simple ETL Studio? <a href="/signup">Create an account</a></p>
+          <p class="auth-legal">By continuing, you agree to use this workspace responsibly.</p>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

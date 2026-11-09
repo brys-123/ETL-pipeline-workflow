@@ -1,0 +1,217 @@
+.storage-warning {
+  margin: 0 0 14px;
+  padding: 11px 14px;
+  border: 1px solid #ead9ad;
+  border-radius: 6px;
+  color: #735a20;
+  background: #fff9e9;
+  font-size: 11px;
+  line-height: 1.55;
+}
+.storage-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.storage-overview-card {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  padding: 14px;
+  border: 1px solid #e8edef;
+  border-radius: 7px;
+  background: #fff;
+}
+.storage-overview-card > span {
+  color: #87969e;
+  font-size: 10px;
+}
+.storage-overview-card > strong {
+  overflow: hidden;
+  color: #254c43;
+  font-size: 16px;
+  text-overflow: ellipsis;
+}
+.storage-overview-card > small {
+  overflow: hidden;
+  color: #87969e;
+  font-size: 9px;
+  text-overflow: ellipsis;
+}
+.storage-settings-grid {
+  display: grid;
+  grid-template-columns: minmax(250px, .75fr) minmax(0, 1.5fr);
+  gap: 12px;
+  align-items: start;
+}
+.storage-card {
+  min-width: 0;
+  padding: 17px;
+}
+.storage-card-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  margin-bottom: 15px;
+}
+.storage-card-heading > div {
+  min-width: 0;
+  flex: 1;
+}
+.storage-card-heading .section-overline {
+  margin: 0 0 4px;
+  font-size: 8px;
+}
+.storage-card-heading h2 {
+  margin: 0;
+  color: #26443c;
+  font-size: 16px;
+  font-weight: 700;
+}
+.storage-card-heading p:not(.section-overline) {
+  margin: 5px 0 0;
+  color: #87969e;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.storage-state {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 20px;
+  color: #65777e;
+  background: #eff3f3;
+  font-size: 9px;
+  font-weight: 650;
+}
+.storage-state.active {
+  color: #27604a;
+  background: #e8f5ed;
+}
+.storage-details {
+  display: grid;
+  gap: 0;
+  margin: 0 0 14px;
+}
+.storage-details > div {
+  display: grid;
+  grid-template-columns: minmax(95px, .7fr) minmax(0, 1.3fr);
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid #edf0f1;
+  font-size: 10px;
+}
+.storage-details dt {
+  color: #839098;
+  font-weight: 500;
+}
+.storage-details dd {
+  overflow-wrap: anywhere;
+  margin: 0;
+  color: #3c555d;
+  font-weight: 600;
+}
+.storage-form-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(100px, .38fr);
+  gap: 11px 13px;
+}
+.storage-form-grid label {
+  display: grid;
+  gap: 5px;
+  color: #536871;
+  font-size: 10px;
+  font-weight: 650;
+}
+.storage-form-grid input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #dfe7e7;
+  border-radius: 5px;
+  outline: none;
+  color: #29453f;
+  background: #fff;
+  font-size: 11px;
+}
+.storage-form-grid input:focus {
+  border-color: #6d9d89;
+  box-shadow: 0 0 0 3px rgba(57, 127, 95, .1);
+}
+.storage-form-wide {
+  grid-column: 1 / -1;
+}
+.storage-secret-note {
+  margin: 10px 0 13px;
+  color: #819198;
+  font-size: 9px;
+  line-height: 1.5;
+}
+.storage-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.storage-action-row .button-primary,
+.storage-action-row .button-secondary,
+.storage-card > .button-secondary {
+  min-height: 34px;
+  font-size: 9px;
+}
+.storage-result {
+  min-height: 15px;
+  margin-top: 10px;
+  color: #2b7151;
+  font-size: 10px;
+  line-height: 1.5;
+}
+.storage-result.error {
+  color: #a64b45;
+}
+.storage-last-activity {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 5px 14px;
+  padding-top: 10px;
+  border-top: 1px solid #edf0f1;
+}
+.storage-last-activity p {
+  margin: 0;
+  color: #829098;
+  font-size: 9px;
+}
+.storage-last-activity strong {
+  display: block;
+  margin-top: 3px;
+  color: #4b6269;
+  font-size: 9px;
+  font-weight: 600;
+}
+.storage-last-activity .subtle-link {
+  align-self: center;
+  font-size: 9px;
+}
+.storage-upload-settings {
+  margin-top: 12px;
+}
+@media (max-width: 1050px) {
+  .storage-overview-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .storage-settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 700px) {
+  .storage-overview-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .storage-card {
+    padding: 13px;
+  }
+  .storage-action-row > button {
+    flex: 1 1 145px;
+  }
+}

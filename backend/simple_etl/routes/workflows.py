@@ -101,6 +101,115 @@ def list_workflows():
     return jsonify(MetadataService(current_app.extensions["etl_storage"]).list_workflows())
 
 
+@workflows_blueprint.get("/workflows/references")
+def workflow_references():
+    workflow_ids = request.args.getlist("workflow_id")
+    storage = current_app.extensions["etl_storage"]
+    if not workflow_ids or len(workflow_ids) > 500 or any(
+        not storage.file_id_is_valid(workflow_id) for workflow_id in workflow_ids
+    ):
+        return jsonify({"error": "Provide between 1 and 500 valid workflow identifiers."}), 400
+    try:
+        metadata = MetadataService(storage)
+        references = {
+            workflow_id: {"executions": 0, "running_executions": 0, "processed_datasets": 0}
+            for workflow_id in dict.fromkeys(workflow_ids)
+        }
+        for execution in metadata.list_executions():
+            workflow_id = execution.get("workflow_id")
+            if workflow_id in references:
+                references[workflow_id]["executions"] += 1
+                if execution.get("status") == "running":
+                    references[workflow_id]["running_executions"] += 1
+        for record in metadata.list_files():
+            workflow_id = record.get("workflow_id")
+            if workflow_id in references and record.get("status") == "processed":
+                references[workflow_id]["processed_datasets"] += 1
+    except (OSError, RuntimeError, ValueError) as exc:
+        current_app.logger.exception("Workflow references could not be read: %s", exc)
+        return jsonify({"error": "Workflow references could not be read."}), 500
+    return jsonify({"references": references})
+
+
+def _delete_workflow_records(workflow_ids: list[str]):
+    storage = current_app.extensions["etl_storage"]
+    if any(not storage.file_id_is_valid(workflow_id) for workflow_id in workflow_ids):
+        return jsonify({"error": "One or more workflow identifiers are invalid."}), 400
+    metadata = MetadataService(storage)
+    try:
+        workflows = {item["workflow_id"]: item for item in metadata.list_workflows()}
+        execution_counts: dict[str, int] = {}
+        running_workflows: set[str] = set()
+        dataset_counts: dict[str, int] = {}
+        for execution in metadata.list_executions():
+            workflow_id = execution.get("workflow_id")
+            if workflow_id:
+                execution_counts[workflow_id] = execution_counts.get(workflow_id, 0) + 1
+                if execution.get("status") == "running":
+                    running_workflows.add(workflow_id)
+        for record in metadata.list_files():
+            workflow_id = record.get("workflow_id")
+            if workflow_id and record.get("status") == "processed":
+                dataset_counts[workflow_id] = dataset_counts.get(workflow_id, 0) + 1
+    except (OSError, RuntimeError, ValueError) as exc:
+        current_app.logger.exception("Workflow deletion dependencies could not be checked: %s", exc)
+        return jsonify({"error": "Workflow references could not be checked. Nothing was deleted."}), 500
+
+    deleted = []
+    failed = []
+    for workflow_id in dict.fromkeys(workflow_ids):
+        if workflow_id not in workflows:
+            failed.append({"workflow_id": workflow_id, "error": "Workflow not found."})
+            continue
+        if workflow_id in running_workflows:
+            failed.append({"workflow_id": workflow_id, "error": "A workflow with a running execution cannot be deleted."})
+            continue
+        try:
+            if not metadata.delete_workflow(workflow_id):
+                failed.append({"workflow_id": workflow_id, "error": "Workflow not found."})
+                continue
+        except (OSError, RuntimeError, ValueError) as exc:
+            current_app.logger.exception("Workflow deletion failed for %s: %s", workflow_id, exc)
+            failed.append({"workflow_id": workflow_id, "error": "The workflow could not be deleted."})
+            continue
+        deleted.append({
+            "workflow_id": workflow_id,
+            "executions_preserved": execution_counts.get(workflow_id, 0),
+            "processed_datasets_preserved": dataset_counts.get(workflow_id, 0),
+        })
+    current_app.logger.info("Deleted %s workflow definition(s); execution history and datasets were retained.", len(deleted))
+    return jsonify({
+        "deleted": deleted,
+        "failed": failed,
+        "deleted_count": len(deleted),
+        "partial": bool(failed),
+        "execution_history_preserved": True,
+        "datasets_preserved": True,
+    }), 200
+
+
+@workflows_blueprint.delete("/workflows/<workflow_id>")
+def delete_workflow(workflow_id: str):
+    response, status_code = _delete_workflow_records([workflow_id])
+    if status_code != 200:
+        return response, status_code
+    result = response.get_json()
+    if not result["deleted"]:
+        return jsonify({"error": result["failed"][0]["error"]}), 404
+    return jsonify({"deleted": True, **result["deleted"][0]})
+
+
+@workflows_blueprint.post("/workflows/delete-selected")
+def delete_selected_workflows():
+    payload = request.get_json(silent=True) or {}
+    workflow_ids = payload.get("workflow_ids")
+    if not isinstance(workflow_ids, list) or not workflow_ids or len(workflow_ids) > 500:
+        return jsonify({"error": "Select between 1 and 500 workflows to delete."}), 400
+    if any(not isinstance(workflow_id, str) or not workflow_id for workflow_id in workflow_ids):
+        return jsonify({"error": "Every workflow identifier must be a non-empty string."}), 400
+    return _delete_workflow_records(workflow_ids)
+
+
 @workflows_blueprint.post("/workflows")
 def save_workflow():
     normalized, error = validate_workflow(request.get_json(silent=True))
@@ -400,8 +509,14 @@ def _execution_node_preview(storage, execution: dict, node_id: str, page_size: i
         page = request.args.get("page", default=1, type=int)
         requested_page_size = request.args.get("page_size", default=page_size, type=int)
         query = request.args.get("q", default="", type=str)
+        summary_type = request.args.get("summary_type")
         if len(query) > 200:
             return jsonify({"error": "Search text must be 200 characters or fewer."}), 400
+        if summary_type is not None and (
+            node["type"] != "statistical_summary"
+            or summary_type not in {"numerical", "categorical"}
+        ):
+            return jsonify({"error": "Choose a valid summary type for this node."}), 400
         dataset = {
             "file_id": execution["execution_id"],
             "execution_id": execution["execution_id"],
@@ -410,7 +525,14 @@ def _execution_node_preview(storage, execution: dict, node_id: str, page_size: i
             "file_type": "json",
             "status": "preview",
         }
-        data = DatasetService(storage).preview(dataset, page, requested_page_size, query)
+        data = DatasetService(storage).preview(
+            dataset,
+            page,
+            requested_page_size,
+            query,
+            "summary_type" if summary_type else None,
+            summary_type,
+        )
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except FileNotFoundError:
@@ -480,14 +602,3 @@ def get_execution_preview(execution_id: str, node_id: str):
     if execution is None:
         return jsonify({"error": "Execution not found."}), 404
     return _execution_node_preview(storage, execution, node_id, page_size=100)
-
-
-@workflows_blueprint.delete("/workflows/<workflow_id>")
-def delete_workflow(workflow_id: str):
-    try:
-        deleted = MetadataService(current_app.extensions["etl_storage"]).delete_workflow(workflow_id)
-    except ValueError:
-        deleted = False
-    if not deleted:
-        return jsonify({"error": "Workflow not found."}), 404
-    return jsonify({"deleted": True, "workflow_id": workflow_id})

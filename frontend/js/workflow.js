@@ -14,6 +14,7 @@ const definitions = {
   select_columns: { title: 'Select Columns', group: 'Transformation', description: 'Choose the imported columns to retain.', icon: 'bi-view-list', color: 'transform' },
   rename_columns: { title: 'Rename Columns', group: 'Transformation', description: 'Rename a field in the incoming dataset.', icon: 'bi-input-cursor-text', color: 'transform' },
   aggregate_data: { title: 'Aggregate Data', group: 'Transformation', description: 'Summarize selected values by one or more groups.', icon: 'bi-bar-chart-steps', color: 'transform' },
+  statistical_summary: { title: 'Statistical Summary', group: 'Transformation', description: 'Calculate numerical and categorical statistics for the incoming dataset.', icon: 'bi-clipboard-data', color: 'transform' },
   merge_data: { title: 'Merge Data', group: 'Transformation', description: 'Join two connected datasets using matching key columns.', icon: 'bi-intersect', color: 'transform' },
   preview_data: { title: 'Preview Data', group: 'Preview', description: 'Inspect the data flowing through this pipeline step.', icon: 'bi-eye', color: 'preview' },
   view_data: { title: 'Preview Data', group: 'Preview', description: 'Inspect data flowing through this legacy preview node.', icon: 'bi-eye', color: 'preview' },
@@ -42,6 +43,19 @@ let previewNodeId = null
 let previewSearchTimer
 let previewRequestId = 0
 let workflowRunMessage = null
+let summaryPages = { numerical: 1, categorical: 1 }
+const numericStatistics = [
+  ['count', 'Count'], ['missing_values', 'Missing values'], ['mean', 'Mean'], ['median', 'Median'],
+  ['mode', 'Mode'], ['minimum', 'Minimum'], ['maximum', 'Maximum'], ['range', 'Range'],
+  ['standard_deviation', 'Standard deviation'], ['variance', 'Variance'], ['q1', 'First quartile (Q1)'],
+  ['q3', 'Third quartile (Q3)'], ['iqr', 'Interquartile range (IQR)'], ['sum', 'Sum'],
+  ['skewness', 'Skewness'], ['kurtosis', 'Kurtosis'],
+]
+const categoricalStatistics = [
+  ['count', 'Count'], ['missing_values', 'Missing values'], ['unique_values', 'Unique values'],
+  ['distinct_categories', 'Distinct categories'], ['mode', 'Mode'], ['frequency', 'Frequency'],
+  ['percentage', 'Percentage'],
+]
 
 const viewport = () => document.getElementById('canvas-viewport')
 const stage = () => document.getElementById('canvas-stage')
@@ -53,10 +67,18 @@ function nodeDefinition(type) {
   return definitions[type] || { title: 'Workflow node', group: 'Node', description: 'Configure this workflow node.', icon: 'bi-puzzle', color: 'transform' }
 }
 
+<<<<<<< HEAD
 function nodeCardCategory(node, definition) {
   if (node.type === 'mysql_input' || node.type === 'postgresql_input') return 'DB source'
   if (node.type === 'api_input') return 'API source'
   return definition.group === 'Transformation' ? 'Transform' : definition.group
+=======
+function snapCoordinate(value) {
+  const coordinate = Math.max(0, Math.round(value))
+  return document.documentElement.dataset.snapToGrid === 'true'
+    ? Math.round(coordinate / 20) * 20
+    : coordinate
+>>>>>>> cabfcff74dd1bdc17781142a1c5b05739a95b821
 }
 
 function markUnsaved() {
@@ -76,6 +98,41 @@ function applyTransform() {
   document.getElementById('zoom-label').textContent = `${Math.round(zoom * 100)}%`
 }
 
+function updateWorkflowFocusName() {
+  document.getElementById('workflow-focus-name').value = document.getElementById('workflow-name').value
+}
+
+async function setWorkflowFocus(enabled) {
+  document.body.classList.toggle('workflow-focus-mode', enabled)
+  if (enabled) {
+    updateWorkflowFocusName()
+    requestAnimationFrame(() => {
+      fitCanvas()
+      drawEdges()
+      renderMinimap()
+    })
+    if (document.fullscreenEnabled && !document.fullscreenElement) {
+      try {
+        await document.documentElement.requestFullscreen()
+      } catch {
+        showToast('Large Screen Mode is active without browser fullscreen.', 'error')
+      }
+    }
+    return
+  }
+  if (document.fullscreenElement && document.exitFullscreen) {
+    try {
+      await document.exitFullscreen()
+    } catch {
+      showToast('Could not exit browser fullscreen. Large Screen Mode was closed.', 'error')
+    }
+  }
+  requestAnimationFrame(() => {
+    drawEdges()
+    renderMinimap()
+  })
+}
+
 function addNode(type, x, y) {
   const definition = nodeDefinition(type)
   const node = {
@@ -83,8 +140,16 @@ function addNode(type, x, y) {
     type,
     name: definition.title,
     description: definition.description,
-    position: { x: Math.max(12, Math.round(x)), y: Math.max(12, Math.round(y)) },
-    config: {},
+    position: { x: Math.max(12, snapCoordinate(x)), y: Math.max(12, snapCoordinate(y)) },
+    config: type === 'statistical_summary'
+      ? {
+          column_selection: 'automatic',
+          numeric_statistics: numericStatistics.map(([value]) => value),
+          categorical_statistics: categoricalStatistics.map(([value]) => value),
+          precision: '3',
+          top_categories: '10',
+        }
+      : {},
   }
   nodes.push(node)
   selectedNodeId = node.id
@@ -169,14 +234,15 @@ function formField(label, key, value = '', options = {}) {
     const multiple = options.multiple ? ' multiple' : ''
     const disabled = options.disabled ? ' disabled' : ''
     const datasetColumn = options.datasetColumn ? ' data-dataset-column="true"' : ''
+    const columnKind = options.columnKind ? ` data-column-kind="${options.columnKind}"` : ''
     const sourceIndex = Number.isInteger(options.sourceIndex) ? ` data-source-index="${options.sourceIndex}"` : ''
     const emptyChoice = options.emptyChoice ? ' data-empty-choice="true"' : ''
     const initialValues = options.datasetColumn ? ` data-initial-values="${escapeHTML(JSON.stringify(selectedValues.filter(Boolean)))}"` : ''
-    return `<div class="config-field"><label for="config-${escapeHTML(key)}">${escapeHTML(label)}</label><select id="config-${escapeHTML(key)}" name="${escapeHTML(key)}"${multiple}${disabled}${datasetColumn}${sourceIndex}${emptyChoice}${initialValues}>${choices}</select></div>`
+    return `<div class="config-field"><label for="config-${escapeHTML(key)}">${escapeHTML(label)}</label><select id="config-${escapeHTML(key)}" name="${escapeHTML(key)}"${multiple}${disabled}${datasetColumn}${columnKind}${sourceIndex}${emptyChoice}${initialValues}>${choices}</select></div>`
   }
   const input = options.multiline
     ? `<textarea id="config-${escapeHTML(key)}" name="${escapeHTML(key)}" placeholder="${escapeHTML(options.placeholder || '')}">${escapeHTML(value)}</textarea>`
-    : `<input id="config-${escapeHTML(key)}" name="${escapeHTML(key)}" value="${escapeHTML(value)}" placeholder="${escapeHTML(options.placeholder || '')}" ${options.type ? `type="${options.type}"` : ''} />`
+    : `<input id="config-${escapeHTML(key)}" name="${escapeHTML(key)}" value="${escapeHTML(value)}" placeholder="${escapeHTML(options.placeholder || '')}" ${options.type ? `type="${options.type}"` : ''} ${options.min !== undefined ? `min="${options.min}"` : ''} ${options.max !== undefined ? `max="${options.max}"` : ''} />`
   return `<div class="config-field"><label for="config-${escapeHTML(key)}">${escapeHTML(label)}</label>${input}</div>`
 }
 
@@ -295,8 +361,8 @@ function hasConfiguredUpstream(node) {
 
 function loadDatasetColumns(file) {
   if (!datasetColumns.has(file.file_id)) {
-    const request = api(`/api/files/${encodeURIComponent(file.file_id)}/preview`)
-      .then((preview) => preview.columns)
+    const request = api(`/api/files/${encodeURIComponent(file.file_id)}/schema`)
+      .then((payload) => payload.schema || [])
       .catch((error) => {
         datasetColumns.delete(file.file_id)
         throw error
@@ -312,23 +378,40 @@ async function populateColumnSelectors(node, renderVersion) {
   try {
     const selectColumns = async (select) => {
       const sourceIndex = select.dataset.sourceIndex === undefined ? null : Number(select.dataset.sourceIndex)
+<<<<<<< HEAD
       const sourceNodes = sourceNodesForNode(node, sourceIndex)
       const sourceColumns = await Promise.all(sourceNodes.map(loadInputColumns))
       return [...new Set(sourceColumns.flat())]
+=======
+      const sourceFiles = sourceFilesForNode(node, sourceIndex)
+      const columnsByFile = await Promise.all(sourceFiles.map((file) => loadDatasetColumns(file)))
+      return [...new Map(columnsByFile.flat().map((column) => [column.name, column])).values()]
+>>>>>>> cabfcff74dd1bdc17781142a1c5b05739a95b821
     }
     const columnsBySelector = await Promise.all(Array.from(selectors, selectColumns))
     if (selectedNodeId !== node.id || renderVersion !== configRenderVersion) return
     Array.from(selectors).forEach((select, index) => {
       const selectedValues = new Set(JSON.parse(select.dataset.initialValues || '[]'))
-      const columns = columnsBySelector[index]
+      const schema = columnsBySelector[index]
       const sourceIndex = select.dataset.sourceIndex === undefined ? null : Number(select.dataset.sourceIndex)
+<<<<<<< HEAD
       const sourceNodes = sourceNodesForNode(node, sourceIndex)
+=======
+      const sourceFiles = sourceFilesForNode(node, sourceIndex)
+      const kind = select.dataset.columnKind
+      const columns = schema
+        .filter((column) => !kind || (kind === 'numeric'
+          ? column.kind === 'numeric'
+          : ['text', 'boolean'].includes(column.kind)))
+        .map((column) => column.name)
+>>>>>>> cabfcff74dd1bdc17781142a1c5b05739a95b821
       const choices = columns.length
         ? [...(select.dataset.emptyChoice ? [{ value: '', label: 'No specific columns' }] : []), ...columns.map((column) => ({ value: column, label: column }))]
         : [{ value: '', label: sourceNodes.some(inputIsConfigured) ? 'No columns found in source preview' : 'Configure an input source first', disabled: true }]
       const hasSelection = selectedValues.size > 0
       select.innerHTML = choices.map((choice) => `<option value="${escapeHTML(choice.value)}" ${selectedValues.has(String(choice.value)) || (choice.value === '' && !hasSelection && Boolean(select.dataset.emptyChoice)) ? 'selected' : ''} ${choice.disabled ? 'disabled' : ''}>${escapeHTML(choice.label)}</option>`).join('')
-      select.disabled = !columns.length
+      select.disabled = !columns.length || (node.type === 'statistical_summary'
+        && document.getElementById('config-column_selection')?.value !== 'manual')
     })
   } catch (error) {
     if (selectedNodeId === node.id && renderVersion === configRenderVersion) showToast(error.message || 'Could not load dataset columns.', 'error')
@@ -357,6 +440,7 @@ function renderConfig() {
   if (previewNodeId !== node.id) {
     previewNodeId = node.id
     previewPage = 1
+    summaryPages = { numerical: 1, categorical: 1 }
   }
   const definition = nodeDefinition(node.type)
   document.getElementById('config-title').textContent = node.name
@@ -457,6 +541,27 @@ function renderConfig() {
     fields += formField('Value column', 'column', node.config.column, { choices: [{ value: '', label: 'Loading imported columns...' }], disabled: true, datasetColumn: true })
     fields += formField('Operation', 'operation', node.config.operation, { choices: [{ value: '', label: 'Choose operation' }, { value: 'sum', label: 'Sum' }, { value: 'average', label: 'Average' }, { value: 'count', label: 'Count' }, { value: 'min', label: 'Minimum' }, { value: 'max', label: 'Maximum' }] })
   }
+  if (node.type === 'statistical_summary') {
+    const choiceList = (items) => items.map(([value, label]) => ({ value, label }))
+    fields += '<p class="config-description">Automatic mode detects numeric and categorical columns from the data at this workflow step. Manual selections are checked against the actual input when the workflow runs.</p>'
+    fields += formField('Column selection', 'column_selection', node.config.column_selection || 'automatic', {
+      choices: [{ value: 'automatic', label: 'Automatic (all supported columns)' }, { value: 'manual', label: 'Manual' }],
+    })
+    fields += formField('Numerical columns', 'numeric_columns', node.config.numeric_columns || [], {
+      choices: [{ value: '', label: 'Loading numeric columns…' }], multiple: true, datasetColumn: true, columnKind: 'numeric',
+    })
+    fields += formField('Categorical columns', 'categorical_columns', node.config.categorical_columns || [], {
+      choices: [{ value: '', label: 'Loading categorical columns…' }], multiple: true, datasetColumn: true, columnKind: 'categorical',
+    })
+    fields += formField('Numerical statistics', 'numeric_statistics', node.config.numeric_statistics || numericStatistics.map(([value]) => value), {
+      choices: choiceList(numericStatistics), multiple: true,
+    })
+    fields += formField('Categorical statistics', 'categorical_statistics', node.config.categorical_statistics || categoricalStatistics.map(([value]) => value), {
+      choices: choiceList(categoricalStatistics), multiple: true,
+    })
+    fields += formField('Decimal precision', 'precision', node.config.precision ?? 3, { type: 'number', min: 0, max: 10 })
+    fields += formField('Top categories per column', 'top_categories', node.config.top_categories ?? 10, { type: 'number', min: 1, max: 100 })
+  }
   if (node.type === 'merge_data') {
     fields += formField('Left dataset key', 'left_on', node.config.left_on, { choices: [{ value: '', label: 'Connect the first input' }], disabled: true, datasetColumn: true, sourceIndex: 0 })
     fields += formField('Right dataset key', 'right_on', node.config.right_on, { choices: [{ value: '', label: 'Connect the second input' }], disabled: true, datasetColumn: true, sourceIndex: 1 })
@@ -469,6 +574,12 @@ function renderConfig() {
     : 'Settings are applied when the workflow runs. Output files are stored separately from source datasets.'
   content.innerHTML = `<p class="config-description">${escapeHTML(definition.description)}</p><span class="config-type"><i class="bi ${definition.icon}"></i>${escapeHTML(definition.group)} node</span>${connectionDetails(node)}<form id="node-config-form">${fields}<div class="config-warning"><i class="bi bi-info-circle"></i><span>${escapeHTML(phaseNote)}</span></div><div class="config-actions"><button class="button-secondary" type="button" id="cancel-node-config">Cancel</button><button class="button-primary" type="submit">Save settings</button></div></form><button class="config-remove" type="button" id="remove-selected-node"><i class="bi bi-trash3"></i> Remove node</button>`
   populateColumnSelectors(node, renderVersion)
+  document.getElementById('config-column_selection')?.addEventListener('change', (event) => {
+    document.querySelectorAll('#config-content [data-column-kind]').forEach((select) => {
+    const hasColumns = Array.from(select.options).some((option) => option.value)
+    select.disabled = event.target.value !== 'manual' || !hasColumns
+  })
+  })
   document.getElementById('node-config-form').addEventListener('submit', (event) => {
     event.preventDefault()
     const values = Object.fromEntries(new FormData(event.currentTarget).entries())
@@ -520,6 +631,37 @@ async function loadNodePreview(node, page, query) {
   try {
     const params = new URLSearchParams({ execution_id: executionId, page: String(page), page_size: '50' })
     if (query) params.set('q', query)
+    if (node.type === 'statistical_summary') {
+      const summaries = await Promise.all(['numerical', 'categorical'].map(async (summaryType) => {
+        const summaryParams = new URLSearchParams({
+          execution_id: executionId,
+          page: String(summaryPages[summaryType]),
+          page_size: '50',
+          summary_type: summaryType,
+        })
+        if (query) summaryParams.set('q', query)
+        return [summaryType, await api(`/api/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(node.id)}/preview?${summaryParams}`)]
+      }))
+      if (requestId !== previewRequestId || selectedNodeId !== node.id || lastExecutionId !== executionId) return
+      const summaryRowCount = summaries.reduce((total, [, summary]) => total + Number(summary.total_rows), 0)
+      state.innerHTML = `<strong>${escapeHTML(node.name)}</strong><p>Execution ${escapeHTML(executionId)} · ${summaryRowCount.toLocaleString()} summary rows · Numerical and categorical results</p>`
+      target.innerHTML = `<label class="table-search node-preview-search"><i class="bi bi-search"></i><input id="node-preview-search" type="search" value="${escapeHTML(query)}" placeholder="Search summary results" aria-label="Search summary results" /></label>${summaries.map(([summaryType, summary]) => renderSummaryPreviewGroup(summaryType, summary)).join('')}`
+      document.getElementById('node-preview-search').addEventListener('input', () => {
+        window.clearTimeout(previewSearchTimer)
+        previewSearchTimer = window.setTimeout(() => {
+          summaryPages = { numerical: 1, categorical: 1 }
+          loadNodePreview(node, 1, document.getElementById('node-preview-search')?.value.trim() || '')
+        }, 180)
+      })
+      target.querySelectorAll('[data-summary-page]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const summaryType = button.dataset.summaryType
+          summaryPages[summaryType] += Number(button.dataset.summaryPage)
+          loadNodePreview(node, 1, query)
+        })
+      })
+      return
+    }
     const data = await api(`/api/workflows/${encodeURIComponent(workflowId)}/nodes/${encodeURIComponent(node.id)}/preview?${params}`)
     if (requestId !== previewRequestId || selectedNodeId !== node.id || lastExecutionId !== executionId) return
     if (data?.status === 'failed' || data?.status === 'skipped') {
@@ -559,6 +701,7 @@ async function loadNodePreview(node, page, query) {
   }
 }
 
+<<<<<<< HEAD
 async function populateExternalSourceFields(node, renderVersion) {
   const connectionSelect = document.getElementById('config-connection_id')
   if (!connectionSelect) return
@@ -626,6 +769,22 @@ async function loadLiveSourcePreview(node, overrideConfig = null) {
       target.innerHTML = ''
     }
   }
+=======
+function renderSummaryPreviewGroup(summaryType, data) {
+  const wantedColumns = summaryType === 'numerical'
+    ? ['column', 'statistic', 'value']
+    : ['column', 'statistic', 'value', 'category', 'frequency', 'percentage', 'top_rank']
+  const columnIndexes = data.columns
+    .map((column, index) => ({ column, index }))
+    .filter(({ column }) => [
+      ...wantedColumns,
+    ].includes(column))
+    .map(({ index }) => index)
+  const title = summaryType === 'numerical' ? 'Numerical summary' : 'Categorical summary'
+  const headings = columnIndexes.map((index) => `<th>${escapeHTML(data.columns[index])}</th>`).join('')
+  const body = data.rows.map((row) => `<tr>${columnIndexes.map((index) => `<td>${escapeHTML(row[index] ?? '')}</td>`).join('')}</tr>`).join('')
+  return `<section class="statistical-preview-group"><h3>${title}</h3><div class="node-preview-table-wrap"><table class="studio-table"><thead><tr>${headings}</tr></thead><tbody>${body || `<tr><td class="table-empty" colspan="${columnIndexes.length}">No ${summaryType} summary rows on this page.</td></tr>`}</tbody></table></div><div class="node-preview-pagination"><span>Page ${data.page} of ${data.total_pages} · ${Number(data.total_rows).toLocaleString()} rows</span><button class="button-secondary button-sm" data-summary-page="-1" data-summary-type="${summaryType}" type="button" ${data.page <= 1 ? 'disabled' : ''}>Previous</button><button class="button-secondary button-sm" data-summary-page="1" data-summary-type="${summaryType}" type="button" ${!data.has_more ? 'disabled' : ''}>Next</button></div></section>`
+>>>>>>> cabfcff74dd1bdc17781142a1c5b05739a95b821
 }
 
 function removeNode(nodeId) {
@@ -701,6 +860,7 @@ function fitCanvas() {
 
 function resetWorkflow() {
   workflowId = null
+  document.documentElement.dataset.openWorkflowId = ''
   nodes = []
   edges = []
   selectedNodeId = null
@@ -744,6 +904,7 @@ async function openWorkflow() {
     const executions = await api(`/api/executions?workflow_id=${encodeURIComponent(id)}`)
     const latestExecution = executions[0]
     workflowId = workflow.workflow_id
+    document.documentElement.dataset.openWorkflowId = workflowId
     nodes = workflow.nodes
     edges = workflow.edges
     selectedNodeId = null
@@ -754,6 +915,7 @@ async function openWorkflow() {
     lastExecutionId = latestExecution?.execution_id || null
     workflowRunMessage = null
     document.getElementById('workflow-name').value = workflow.name
+    updateWorkflowFocusName()
     document.getElementById('canvas-status').textContent = `Saved · ${new Date(workflow.updated_at).toLocaleString()}`
     document.getElementById('workflow-run-feedback').hidden = true
     pan = { x: 0, y: 0 }
@@ -783,6 +945,7 @@ async function saveWorkflow() {
       body: JSON.stringify({ workflow_id: workflowId, name, nodes, edges }),
     })
     workflowId = workflow.workflow_id
+    document.documentElement.dataset.openWorkflowId = workflowId
     document.getElementById('canvas-status').textContent = `Saved · ${new Date(workflow.updated_at).toLocaleString()}`
     await loadWorkflows()
     document.getElementById('saved-workflows').value = workflowId
@@ -1011,6 +1174,8 @@ function initCanvas() {
       if (!node) return
       node.position.x = Math.max(0, Math.round(draggingNode.x + (event.clientX - draggingNode.pointerX) / zoom))
       node.position.y = Math.max(0, Math.round(draggingNode.y + (event.clientY - draggingNode.pointerY) / zoom))
+      node.position.x = snapCoordinate(node.position.x)
+      node.position.y = snapCoordinate(node.position.y)
       const card = nodesLayer().querySelector(`[data-node-id="${CSS.escape(node.id)}"]`)
       if (card) { card.style.left = `${node.position.x}px`; card.style.top = `${node.position.y}px` }
       drawEdges()
@@ -1051,10 +1216,54 @@ function initCanvas() {
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement.tagName)) return
     removeNode(selectedNodeId)
   })
+  window.addEventListener('resize', () => {
+    if (!document.body.classList.contains('workflow-focus-mode')) return
+    requestAnimationFrame(() => { drawEdges(); renderMinimap() })
+  })
 }
 
 export function initWorkflow() {
   initCanvas()
+  const focusNodeSelect = document.getElementById('workflow-focus-node-type')
+  Object.entries(definitions).filter(([type]) => type !== 'view_data').forEach(([type, definition]) => {
+    focusNodeSelect.add(new Option(definition.title, type))
+  })
+  document.getElementById('workflow-focus-toggle').addEventListener('click', () => {
+    setWorkflowFocus(true).catch((error) => showToast(error.message || 'Large Screen Mode could not be opened.', 'error'))
+  })
+  document.getElementById('workflow-focus-exit').addEventListener('click', () => {
+    setWorkflowFocus(false).catch((error) => showToast(error.message || 'Large Screen Mode could not be closed.', 'error'))
+  })
+  document.getElementById('workflow-focus-name').addEventListener('input', (event) => {
+    document.getElementById('workflow-name').value = event.target.value
+    markUnsaved()
+  })
+  document.getElementById('workflow-focus-add-node').addEventListener('click', () => {
+    const index = nodes.length
+    const columns = Math.max(1, Math.floor((viewport().clientWidth - 50) / 225))
+    addNode(focusNodeSelect.value, 30 + (index % columns) * 225, 75 + Math.floor(index / columns) * 145)
+  })
+  document.getElementById('workflow-focus-zoom-in').addEventListener('click', () => setCanvasZoom(zoom + .1))
+  document.getElementById('workflow-focus-zoom-out').addEventListener('click', () => setCanvasZoom(zoom - .1))
+  document.getElementById('workflow-focus-fit').addEventListener('click', fitCanvas)
+  document.getElementById('workflow-focus-reset').addEventListener('click', () => {
+    zoom = 1
+    pan = { x: 0, y: 0 }
+    applyTransform()
+  })
+  document.getElementById('workflow-focus-save').addEventListener('click', saveWorkflow)
+  document.getElementById('workflow-focus-run').addEventListener('click', runWorkflow)
+  document.addEventListener('fullscreenchange', () => {
+    if (!document.fullscreenElement && document.body.classList.contains('workflow-focus-mode')) {
+      document.body.classList.remove('workflow-focus-mode')
+      requestAnimationFrame(() => { drawEdges(); renderMinimap() })
+    }
+  })
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && document.body.classList.contains('workflow-focus-mode') && !document.fullscreenElement) {
+      setWorkflowFocus(false).catch((error) => showToast(error.message || 'Large Screen Mode could not be closed.', 'error'))
+    }
+  })
   document.getElementById('new-workflow').addEventListener('click', () => {
     if (nodes.length && !window.confirm('Start a new workflow? Unsaved changes will be discarded.')) return
     resetWorkflow()
@@ -1074,7 +1283,10 @@ export function initWorkflow() {
   document.getElementById('zoom-in').addEventListener('click', () => setCanvasZoom(zoom + .1))
   document.getElementById('zoom-out').addEventListener('click', () => setCanvasZoom(zoom - .1))
   document.getElementById('fit-canvas').addEventListener('click', fitCanvas)
-  document.getElementById('workflow-name').addEventListener('input', markUnsaved)
+  document.getElementById('workflow-name').addEventListener('input', () => {
+    updateWorkflowFocusName()
+    markUnsaved()
+  })
   window.addEventListener('app:pagechange', async (event) => {
     if (event.detail.page !== 'workflow') return
     await Promise.all([loadWorkflows(), loadFilesForNodes(), loadConnections().catch(() => [])])
@@ -1085,6 +1297,11 @@ export function initWorkflow() {
     if (selectedNodeId) renderConfig()
   })
   window.addEventListener('app:refresh', loadWorkflows)
+  window.addEventListener('app:workflows-deleted', (event) => {
+    if (!event.detail.workflowIds.includes(workflowId)) return
+    resetWorkflow()
+    showToast('The deleted workflow was closed. Its execution history and generated datasets remain available.')
+  })
   window.addEventListener('app:open-workflow', async (event) => {
     switchPage('workflow')
     await loadWorkflows()

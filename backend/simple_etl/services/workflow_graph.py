@@ -12,6 +12,7 @@ TRANSFORM_TYPES = {
     "select_columns",
     "rename_columns",
     "aggregate_data",
+    "statistical_summary",
     "merge_data",
     "preview_data",
     "view_data",
@@ -130,6 +131,24 @@ def plan_workflow(workflow: dict[str, Any], metadata: Any) -> tuple[list[dict[st
             or config.get("operation") not in {"sum", "mean", "average", "count", "min", "max", "median"}
         ):
             errors.append(f"Configure a grouping column and aggregation for {node.get('name', node_id)}.")
+        elif node_type == "statistical_summary":
+            if config.get("column_selection", "automatic") not in {"automatic", "manual"}:
+                errors.append(f"Choose automatic or manual column selection for {node.get('name', node_id)}.")
+            for key in ("numeric_columns", "categorical_columns"):
+                columns = config.get(key, [])
+                if not isinstance(columns, list) or any(not isinstance(column, str) or not column for column in columns):
+                    errors.append(f"Choose valid columns for {node.get('name', node_id)}.")
+                    break
+            precision = config.get("precision", 3)
+            if isinstance(precision, bool) or not str(precision).isdigit() or not 0 <= int(precision) <= 10:
+                errors.append(f"Choose a decimal precision from 0 to 10 for {node.get('name', node_id)}.")
+            top_categories = config.get("top_categories", 10)
+            if isinstance(top_categories, bool) or not str(top_categories).isdigit() or not 1 <= int(top_categories) <= 100:
+                errors.append(f"Choose between 1 and 100 top categories for {node.get('name', node_id)}.")
+            if config.get("column_selection", "automatic") == "manual" and not (
+                config.get("numeric_columns") or config.get("categorical_columns")
+            ):
+                errors.append(f"Choose at least one numeric or categorical column for {node.get('name', node_id)}.")
         elif node_type in {"csv_output", "excel_output", "json_output"} and not config.get("filename"):
             errors.append(f"Enter an output filename for {node.get('name', node_id)}.")
 

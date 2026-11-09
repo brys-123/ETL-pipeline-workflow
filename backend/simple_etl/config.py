@@ -23,6 +23,9 @@ def default_config() -> dict[str, object]:
         "http://127.0.0.1:5000,http://localhost:5000,http://127.0.0.1:5173,http://localhost:5173",
     )
     return {
+        "AUTH_ENABLED": os.getenv("AUTH_ENABLED", "true").strip().lower() not in {"0", "false", "no"},
+        "AUTH_COOKIE_SECURE": os.getenv("AUTH_COOKIE_SECURE", "false").strip().lower() in {"1", "true", "yes"},
+        "SECRET_KEY": os.getenv("FLASK_SECRET_KEY") or os.getenv("SECRET_KEY"),
         "STORAGE_MODE": storage_mode,
         "ACTIVE_STORAGE_BACKEND": active_storage_backend,
         "STORAGE_ROOT": storage_root.resolve(),

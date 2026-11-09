@@ -22,6 +22,25 @@ from .workflow_graph import EXTERNAL_INPUT_TYPES, FILE_INPUT_TYPES, INPUT_TYPES,
 _execution_lock = threading.Lock()
 _logger = logging.getLogger(__name__)
 
+NUMERIC_SUMMARY_STATISTICS = (
+    "count", "missing_values", "mean", "median", "mode", "minimum", "maximum", "range",
+    "standard_deviation", "variance", "q1", "q3", "iqr", "sum", "skewness", "kurtosis",
+)
+CATEGORICAL_SUMMARY_STATISTICS = (
+    "count", "missing_values", "unique_values", "distinct_categories", "mode", "frequency", "percentage",
+)
+SUMMARY_COLUMNS = (
+    "summary_type", "column", "statistic", "value", "category", "frequency", "percentage", "top_rank",
+)
+
+
+def acquire_storage_switch() -> bool:
+    return _execution_lock.acquire(blocking=False)
+
+
+def release_storage_switch() -> None:
+    _execution_lock.release()
+
 
 class WorkflowExecutionError(ValueError):
     def __init__(self, message: str, node_id: str | None = None):
@@ -66,6 +85,143 @@ def _filter(frame: pd.DataFrame, config: dict[str, Any]) -> pd.DataFrame:
     except (TypeError, ValueError, OverflowError) as exc:
         raise WorkflowExecutionError(f"Could not apply the filter to column {name}.") from exc
     return frame.loc[mask].copy()
+
+
+def _summary_number(value: Any, precision: int) -> Any:
+    if isinstance(value, list):
+        return [_summary_number(item, precision) for item in value]
+    if pd.isna(value):
+        return None
+    if isinstance(value, (int, float)):
+        return round(value, precision) if isinstance(value, float) else int(value)
+    if hasattr(value, "item"):
+        return _summary_number(value.item(), precision)
+    return value
+
+
+def statistical_summary(frame: pd.DataFrame, config: dict[str, Any]) -> pd.DataFrame:
+    selection = config.get("column_selection", "automatic")
+    if selection not in {"automatic", "manual"}:
+        raise WorkflowExecutionError("Choose automatic or manual column selection.")
+
+    try:
+        precision = int(config.get("precision", 3))
+        top_categories = int(config.get("top_categories", 10))
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise WorkflowExecutionError("Decimal precision and top category count must be whole numbers.") from exc
+    if not 0 <= precision <= 10:
+        raise WorkflowExecutionError("Choose a decimal precision from 0 to 10.")
+    if not 1 <= top_categories <= 100:
+        raise WorkflowExecutionError("Choose between 1 and 100 top categories.")
+
+    numeric_types = [name for name in frame.columns if pd.api.types.is_numeric_dtype(frame[name].dtype)]
+    categorical_types = [
+        name for name in frame.columns
+        if pd.api.types.is_object_dtype(frame[name].dtype)
+        or pd.api.types.is_string_dtype(frame[name].dtype)
+        or isinstance(frame[name].dtype, pd.CategoricalDtype)
+        or pd.api.types.is_bool_dtype(frame[name].dtype)
+    ]
+    numeric_columns = config.get("numeric_columns", [])
+    categorical_columns = config.get("categorical_columns", [])
+    if not isinstance(numeric_columns, list) or not isinstance(categorical_columns, list):
+        raise WorkflowExecutionError("Selected summary columns must be lists.")
+    if selection == "automatic":
+        numeric_columns, categorical_columns = numeric_types, categorical_types
+    else:
+        if any(column not in frame.columns for column in numeric_columns + categorical_columns):
+            raise WorkflowExecutionError("A selected summary column does not exist in the incoming dataset.")
+        if any(column not in numeric_types for column in numeric_columns):
+            raise WorkflowExecutionError("Select numeric columns only in the numeric columns setting.")
+        if any(column not in categorical_types for column in categorical_columns):
+            raise WorkflowExecutionError("Select text, category, or boolean columns only in the categorical columns setting.")
+
+    requested_numeric = config.get("numeric_statistics", list(NUMERIC_SUMMARY_STATISTICS))
+    requested_categorical = config.get("categorical_statistics", list(CATEGORICAL_SUMMARY_STATISTICS))
+    if not isinstance(requested_numeric, list) or any(item not in NUMERIC_SUMMARY_STATISTICS for item in requested_numeric):
+        raise WorkflowExecutionError("Choose supported numerical summary statistics.")
+    if not isinstance(requested_categorical, list) or any(item not in CATEGORICAL_SUMMARY_STATISTICS for item in requested_categorical):
+        raise WorkflowExecutionError("Choose supported categorical summary statistics.")
+
+    rows: list[dict[str, Any]] = []
+
+    def add_metric(summary_type: str, column: Any, statistic: str, value: Any) -> None:
+        rows.append({
+            "summary_type": summary_type,
+            "column": str(column),
+            "statistic": statistic,
+            "value": value,
+            "category": None,
+            "frequency": None,
+            "percentage": None,
+            "top_rank": None,
+        })
+
+    for column in numeric_columns:
+        series = frame[column]
+        valid = series.dropna()
+        try:
+            modes = valid.mode(dropna=True)
+            q1, q3 = valid.quantile(.25), valid.quantile(.75)
+            statistics = {
+                "count": int(valid.count()),
+                "missing_values": int(series.isna().sum()),
+                "mean": valid.mean(),
+                "median": valid.median(),
+                "mode": modes.iloc[0] if not modes.empty else None,
+                "minimum": valid.min() if not valid.empty else None,
+                "maximum": valid.max() if not valid.empty else None,
+                "range": valid.max() - valid.min() if not valid.empty else None,
+                "standard_deviation": valid.std(),
+                "variance": valid.var(),
+                "q1": q1,
+                "q3": q3,
+                "iqr": q3 - q1,
+                "sum": valid.sum(),
+                "skewness": valid.skew(),
+                "kurtosis": valid.kurt(),
+            }
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise WorkflowExecutionError(f"Could not calculate numeric statistics for column {column}.") from exc
+        for statistic in requested_numeric:
+            add_metric("numerical", column, statistic, _summary_number(statistics[statistic], precision))
+
+    for column in categorical_columns:
+        series = frame[column]
+        valid = series.dropna()
+        try:
+            frequencies = valid.value_counts(dropna=True, sort=True)
+            modes = valid.mode(dropna=True)
+            unique_values = valid.unique().tolist()
+            statistics = {
+                "count": int(valid.count()),
+                "missing_values": int(series.isna().sum()),
+                "unique_values": unique_values,
+                "distinct_categories": int(valid.nunique(dropna=True)),
+                "mode": modes.iloc[0] if not modes.empty else None,
+            }
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise WorkflowExecutionError(f"Could not calculate categorical statistics for column {column}.") from exc
+        for statistic in requested_categorical:
+            if statistic in statistics:
+                add_metric("categorical", column, statistic, statistics[statistic])
+        if "frequency" in requested_categorical or "percentage" in requested_categorical:
+            top_values = set(frequencies.head(top_categories).index.tolist())
+            denominator = int(valid.count())
+            for value, frequency in frequencies.items():
+                rank = frequencies.index.get_loc(value) + 1
+                rows.append({
+                    "summary_type": "categorical",
+                    "column": str(column),
+                    "statistic": "category",
+                    "value": value,
+                    "category": value,
+                    "frequency": int(frequency) if "frequency" in requested_categorical else None,
+                    "percentage": _summary_number(frequency * 100 / denominator, precision) if denominator and "percentage" in requested_categorical else None,
+                    "top_rank": rank if value in top_values else None,
+                })
+
+    return pd.DataFrame(rows, columns=SUMMARY_COLUMNS)
 
 
 def cleaning_node(config: dict[str, Any]) -> dict[str, Any]:
@@ -155,6 +311,8 @@ def transform_node(node: dict[str, Any], inputs: list[pd.DataFrame]) -> pd.DataF
         if operation in {"sum", "mean", "median"} and not pd.api.types.is_numeric_dtype(frame[column]):
             raise WorkflowExecutionError(f"{operation.title()} requires a numeric value column.")
         return frame.groupby(group_by, dropna=False, as_index=False).agg(**{column: (column, operation)})
+    if node_type == "statistical_summary":
+        return statistical_summary(frame, config)
     raise WorkflowExecutionError(f"Unsupported transformation node: {node_type}.")
 
 
@@ -250,6 +408,7 @@ class WorkflowExecutionService:
             "execution_id": execution_id,
             "workflow_id": workflow["workflow_id"],
             "workflow_name": workflow["name"],
+            "owner_id": workflow.get("owner_id"),
             "started_at": utc_now(),
             "completed_at": None,
             "status": "running",
@@ -399,6 +558,7 @@ class WorkflowExecutionService:
                             output = {
                                 "file_id": file_id,
                                 "dataset_id": file_id,
+                                "owner_id": record.get("owner_id"),
                                 "filename": managed_filename,
                                 "file_type": extension[1:],
                                 "file_size": self.storage.processed_path(file_id, extension).stat().st_size,

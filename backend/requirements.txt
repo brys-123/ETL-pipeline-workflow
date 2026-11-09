@@ -5,6 +5,12 @@ openpyxl==3.1.5
 python-dotenv>=1.2.2
 pytest>=8.3
 psycopg[binary]>=3.2,<4
+<<<<<<< HEAD
 keyring>=25,<26
 PyMySQL>=1.1,<2
 requests>=2.32,<3
+=======
+SQLAlchemy>=2.0,<3
+Alembic>=1.14,<2
+keyring>=25,<27
+>>>>>>> cabfcff74dd1bdc17781142a1c5b05739a95b821
