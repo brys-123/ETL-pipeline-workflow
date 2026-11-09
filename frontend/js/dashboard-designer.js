@@ -84,7 +84,7 @@ function makeComponent(type, schema = []) {
       showLegend: true,
       legendPosition: 'bottom',
       legendOrientation: 'horizontal',
-      legendTextSize: 9,
+      legendTextSize: 12,
       legendAlign: 'center',
       legendItemSpacing: 10,
       filterMode: 'categorical',
@@ -411,7 +411,7 @@ function renderConfig() {
             ${configToggle('Show Legend', 'showLegend', config.showLegend !== false)}
             ${configField('Legend position', 'legendPosition', config.legendPosition || 'bottom', { choices: [['top', 'Top'], ['bottom', 'Bottom'], ['left', 'Left'], ['right', 'Right']] })}
             ${configField('Legend orientation', 'legendOrientation', config.legendOrientation || 'horizontal', { choices: [['horizontal', 'Horizontal'], ['vertical', 'Vertical']] })}
-            ${configField('Legend text size', 'legendTextSize', config.legendTextSize ?? 9, { type: 'number', min: 8, max: 18 })}
+            ${configField('Legend text size', 'legendTextSize', config.legendTextSize ?? 12, { type: 'number', min: 12, max: 18 })}
             ${configField('Legend alignment', 'legendAlign', config.legendAlign || 'center', { choices: [['left', 'Left'], ['center', 'Center'], ['right', 'Right']] })}
             ${configField('Legend item spacing', 'legendItemSpacing', config.legendItemSpacing ?? 10, { type: 'number', min: 0, max: 40 })}
           `}
@@ -699,7 +699,7 @@ function legendOption(component, names = []) {
     itemGap: Math.max(0, Math.min(40, Number(config.legendItemSpacing) || 0)),
     textStyle: {
       color: '#486B55',
-      fontSize: Math.max(8, Math.min(18, Number(config.legendTextSize) || 9)),
+      fontSize: Math.max(12, Math.min(18, Number(config.legendTextSize) || 12)),
     },
     ...(position === 'top' ? { top: 4, left: positionAlign } : {}),
     ...(position === 'bottom' ? { bottom: 2, left: positionAlign } : {}),
@@ -718,7 +718,7 @@ function chartTooltip(component, pie = false) {
     borderColor: '#CFE5D6',
     borderWidth: 1,
     padding: [9, 12],
-    textStyle: { color: '#174D35', fontSize: 11 },
+    textStyle: { color: '#172B22', fontSize: 13 },
     extraCssText: 'box-shadow: 0 6px 20px rgba(23,77,53,.14); border-radius: 6px;',
     axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(38,155,101,.08)' } },
     formatter: (input) => {
@@ -753,8 +753,8 @@ function chartOption(component) {
   const { type, config } = component
   const axis = {
     axisLine: { lineStyle: { color: '#B4D9C1' } },
-    axisLabel: { color: '#486B55', fontSize: 10, hideOverlap: true, margin: 10 },
-    nameTextStyle: { color: '#174D35', fontSize: 10, fontWeight: 600 },
+    axisLabel: { color: '#52645A', fontSize: 12, hideOverlap: true, margin: 10 },
+    nameTextStyle: { color: '#14532D', fontSize: 13, fontWeight: 600 },
     splitLine: { show: component.config.showGridLines !== false, lineStyle: { color: '#EAF6EE', type: 'dashed' } },
   }
   const legend = legendOption(component)
@@ -764,7 +764,7 @@ function chartOption(component) {
     animationDuration: 450,
     color: palette,
     backgroundColor: config.chartBackground || 'transparent',
-    textStyle: { color: '#174D35', fontFamily: 'Inter, sans-serif', fontSize: 11 },
+    textStyle: { color: '#172B22', fontFamily: 'Inter, sans-serif', fontSize: 13 },
     tooltip: chartTooltip(component),
     ...(type === 'heatmap' ? {} : { legend }),
     grid: {
@@ -936,7 +936,7 @@ function chartOption(component) {
         label: {
           show: config.showDataLabels !== false,
           color: '#174D35',
-          fontSize: 10,
+          fontSize: 12,
           minShowLabelAngle: 4,
           labelLayout: { hideOverlap: true, moveOverlap: 'shiftY' },
           formatter: (params) => {
@@ -994,8 +994,8 @@ function chartOption(component) {
       }],
     }
   }
-  if (type === 'radar') return { ...base, legend: visibleLegend([component.title]), radar: { indicator: groups.map(([name]) => ({ name, max: Math.max(1, ...values.map(Math.abs)) })), axisName: { color: '#206B48', fontSize: 9 }, splitArea: { areaStyle: { color: ['#FFFFFF', '#F4FBF6'] } } }, series: [{ name: component.title, type: 'radar', data: [{ value: values, name: component.title }], label: { show: config.showDataLabels === true, formatter: (params) => numberText(params.value, config.decimalPrecision) }, areaStyle: { opacity: .18 } }] }
-  if (type === 'treemap' || type === 'funnel') return { ...base, legend: visibleLegend(names), tooltip: chartTooltip(component, true), series: [{ name: aggregationTitle(config), type, data: groups.map(([name, value]) => ({ name, value })), label: { show: config.showDataLabels !== false, color: '#174D35', fontSize: 10, formatter: (params) => numberText(params.value, config.decimalPrecision, config.numberFormat) }, itemStyle: { borderColor: '#fff', borderWidth: 2 } }] }
+  if (type === 'radar') return { ...base, legend: visibleLegend([component.title]), radar: { indicator: groups.map(([name]) => ({ name, max: Math.max(1, ...values.map(Math.abs)) })), axisName: { color: '#14532D', fontSize: 12 }, splitArea: { areaStyle: { color: ['#FFFFFF', '#F0FDF4'] } } }, series: [{ name: component.title, type: 'radar', data: [{ value: values, name: component.title }], label: { show: config.showDataLabels === true, formatter: (params) => numberText(params.value, config.decimalPrecision) }, areaStyle: { opacity: .18 } }] }
+  if (type === 'treemap' || type === 'funnel') return { ...base, legend: visibleLegend(names), tooltip: chartTooltip(component, true), series: [{ name: aggregationTitle(config), type, data: groups.map(([name, value]) => ({ name, value })), label: { show: config.showDataLabels !== false, color: '#14532D', fontSize: 12, formatter: (params) => numberText(params.value, config.decimalPrecision, config.numberFormat) }, itemStyle: { borderColor: '#fff', borderWidth: 2 } }] }
   if (type === 'heatmap') {
     const xField = config.measure2
     const xNames = [...new Set(rows.map((row) => String(row[config.dimension] ?? '(blank)')))].slice(0, 18)
@@ -1014,7 +1014,7 @@ function chartOption(component) {
         position: 'top',
         backgroundColor: '#FFFFFF',
         borderColor: '#CFE5D6',
-        textStyle: { color: '#174D35', fontSize: 11 },
+        textStyle: { color: '#172B22', fontSize: 13 },
         formatter: (params) => {
           const [x, y, value] = params.value
           return `${escapeHTML(config.dimension)}: ${escapeHTML(xNames[x])}<br>${escapeHTML(xField)}: ${escapeHTML(yNames[y])}<br>${escapeHTML(aggregationTitle(config))}: ${numberText(value, config.decimalPrecision, config.numberFormat)}`
@@ -1024,7 +1024,7 @@ function chartOption(component) {
       xAxis: { type: 'category', name: config.dimension, nameLocation: 'middle', nameGap: 28, data: xNames, splitArea: { show: true }, ...axis },
       yAxis: { type: 'category', name: xField, nameLocation: 'middle', nameGap: 48, data: yNames, splitArea: { show: true }, ...axis },
       visualMap: { min: Math.min(0, ...valuesHeat.map((item) => item[2])), max: Math.max(1, ...valuesHeat.map((item) => item[2])), calculable: true, orient: 'horizontal', left: 'center', bottom: 2, inRange: { color: ['#DDF4E6', '#80D6A5', '#269B65', '#174D35'] } },
-      series: [{ name: aggregationTitle(config), type: 'heatmap', data: valuesHeat, label: { show: config.showDataLabels === true && valuesHeat.length < 60, color: '#174D35', fontSize: 9 } }],
+      series: [{ name: aggregationTitle(config), type: 'heatmap', data: valuesHeat, label: { show: config.showDataLabels === true && valuesHeat.length < 60, color: '#14532D', fontSize: 12 } }],
     }
   }
   return { ...base, xAxis: { type: 'category', data: names, ...axis }, yAxis: { type: 'value', ...axis }, series: [{ name: config.measure || 'Value', type: 'bar', data: categoryData, label: { show: config.showDataLabels === true, formatter: labelFormatter } }] }

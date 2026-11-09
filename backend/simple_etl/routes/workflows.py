@@ -1,4 +1,5 @@
 import math
+import re
 from flask import Blueprint, current_app, jsonify, request
 
 from ..services.metadata_service import MetadataService
@@ -44,6 +45,27 @@ def validate_workflow(payload: object) -> tuple[dict | None, str | None]:
         config = node.get("config", {})
         if not isinstance(config, dict):
             return None, "Workflow node configuration must be an object."
+        def contains_secret_key(value):
+            if isinstance(value, dict):
+                return any(
+                    re.search(r"password|token|secret|api.?key|authorization", str(key), re.IGNORECASE)
+                    or contains_secret_key(child)
+                    for key, child in value.items()
+                )
+            if isinstance(value, list):
+                return any(contains_secret_key(item) for item in value)
+            return False
+
+        if contains_secret_key(config):
+            return None, "Workflow node configuration cannot contain credentials or secrets."
+        external_config_keys = {
+            "mysql_input": {"connection_id", "table", "query", "query_parameters"},
+            "postgresql_input": {"connection_id", "schema", "table", "query", "query_parameters"},
+            "api_input": {"connection_id", "data_path", "field_mapping", "pagination", "query_params", "response_format"},
+        }
+        allowed_config = external_config_keys.get(node_type)
+        if allowed_config is not None and set(config) - allowed_config:
+            return None, "External input nodes may store only a saved connection reference and extraction settings."
         description = node.get("description", "")
         if not isinstance(description, str):
             return None, "Workflow node descriptions must be text."
@@ -356,6 +378,7 @@ def _execution_node_preview(storage, execution: dict, node_id: str, page_size: i
         "total_rows": status.get("rows", 0),
         "total_columns": status.get("columns", 0),
         "column_metadata": status.get("column_metadata", []),
+        "source_metrics": status.get("source_metrics"),
         "executed_at": status.get("executed_at"),
         "rows": [],
         "columns": [],

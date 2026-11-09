@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="theme-color" content="#164E38" />
+    <meta name="theme-color" content="#14532D" />
     <meta name="color-scheme" content="light" />
     <meta name="description" content="A simple workspace for visual data workflows." />
     <title>Simple ETL Studio</title>
@@ -186,7 +186,9 @@
                 <div class="builder-panel-heading"><span class="section-overline">PALETTE</span><h2>Node library</h2><p>Drag a node onto the canvas.</p></div>
                 <label class="node-search"><i class="bi bi-search" aria-hidden="true"></i><span class="visually-hidden">Search workflow nodes</span><input id="node-search" type="search" placeholder="Search nodes" autocomplete="off" /></label>
                 <p class="node-search-empty" id="node-search-empty" hidden>No nodes match this search.</p>
-                <div class="node-group"><h3>INPUT</h3><button class="palette-node" draggable="true" data-node-type="csv_input"><span class="node-type-icon input"><i class="bi bi-filetype-csv"></i></span><span><strong>CSV Input</strong><small>Read a CSV dataset</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="excel_input"><span class="node-type-icon input"><i class="bi bi-file-earmark-spreadsheet"></i></span><span><strong>Excel Input</strong><small>Read an XLSX workbook</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="json_input"><span class="node-type-icon input"><i class="bi bi-braces"></i></span><span><strong>JSON Input</strong><small>Read a JSON dataset</small></span><i class="bi bi-grip-vertical drag-grip"></i></button></div>
+                <div class="node-group"><h3>FILE SOURCES</h3><button class="palette-node" draggable="true" data-node-type="csv_input"><span class="node-type-icon input"><i class="bi bi-filetype-csv"></i></span><span><strong>CSV Input</strong><small>Read a CSV dataset</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="excel_input"><span class="node-type-icon input"><i class="bi bi-file-earmark-spreadsheet"></i></span><span><strong>Excel Input</strong><small>Read an XLSX workbook</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="json_input"><span class="node-type-icon input"><i class="bi bi-braces"></i></span><span><strong>JSON Input</strong><small>Read a JSON dataset</small></span><i class="bi bi-grip-vertical drag-grip"></i></button></div>
+                <div class="node-group"><h3>DATABASE SOURCES</h3><button class="palette-node" draggable="true" data-node-type="mysql_input"><span class="node-type-icon input"><i class="bi bi-database"></i></span><span><strong>MySQL Input</strong><small>Read a database table or SELECT</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="postgresql_input"><span class="node-type-icon input"><i class="bi bi-database"></i></span><span><strong>PostgreSQL Input</strong><small>Read a database table or SELECT</small></span><i class="bi bi-grip-vertical drag-grip"></i></button></div>
+                <div class="node-group"><h3>API SOURCES</h3><button class="palette-node" draggable="true" data-node-type="api_input"><span class="node-type-icon input"><i class="bi bi-cloud-arrow-down"></i></span><span><strong>REST API Input</strong><small>Read a JSON or CSV endpoint</small></span><i class="bi bi-grip-vertical drag-grip"></i></button></div>
                 <div class="node-group"><h3>TRANSFORMATION</h3><button class="palette-node" draggable="true" data-node-type="clean_data"><span class="node-type-icon transform"><i class="bi bi-magic"></i></span><span><strong>Clean Data</strong><small>Prepare inconsistent values</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="remove_duplicates"><span class="node-type-icon transform"><i class="bi bi-copy"></i></span><span><strong>Remove Duplicates</strong><small>Identify repeated rows</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="filter_rows"><span class="node-type-icon transform"><i class="bi bi-funnel"></i></span><span><strong>Filter Rows</strong><small>Keep matching records</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="select_columns"><span class="node-type-icon transform"><i class="bi bi-view-list"></i></span><span><strong>Select Columns</strong><small>Choose fields to keep</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="rename_columns"><span class="node-type-icon transform"><i class="bi bi-input-cursor-text"></i></span><span><strong>Rename Columns</strong><small>Change field labels</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="aggregate_data"><span class="node-type-icon transform"><i class="bi bi-bar-chart-steps"></i></span><span><strong>Aggregate Data</strong><small>Summarize selected values</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="merge_data"><span class="node-type-icon transform"><i class="bi bi-intersect"></i></span><span><strong>Merge Data</strong><small>Combine two datasets</small></span><i class="bi bi-grip-vertical drag-grip"></i></button></div>
                 <div class="node-group"><h3>PREVIEW &amp; OUTPUT</h3><button class="palette-node" draggable="true" data-node-type="preview_data"><span class="node-type-icon preview"><i class="bi bi-eye"></i></span><span><strong>Preview Data</strong><small>Inspect data at this pipeline step</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="csv_output"><span class="node-type-icon output"><i class="bi bi-filetype-csv"></i></span><span><strong>CSV Output</strong><small>Export a CSV file</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="excel_output"><span class="node-type-icon output"><i class="bi bi-file-earmark-spreadsheet"></i></span><span><strong>Excel Output</strong><small>Export an XLSX file</small></span><i class="bi bi-grip-vertical drag-grip"></i></button><button class="palette-node" draggable="true" data-node-type="json_output"><span class="node-type-icon output"><i class="bi bi-braces"></i></span><span><strong>JSON Output</strong><small>Export a JSON file</small></span><i class="bi bi-grip-vertical drag-grip"></i></button></div>
                 <div class="phase-note"><i class="bi bi-info-circle"></i><span>Connect configured inputs, transformations, and outputs before running this workflow.</span></div>
@@ -246,13 +248,63 @@
 
           <section class="page-view" id="page-settings" aria-labelledby="settings-title" hidden>
             <div class="page-heading-row"><div><p class="section-overline">APPLICATION</p><h1 id="settings-title">Settings</h1><p>Storage and upload settings for this local installation.</p></div></div>
-            <section class="surface-panel settings-panel"><div class="settings-row"><span class="settings-icon"><i class="bi bi-hdd-stack"></i></span><span><strong>Storage mode</strong><small>Where datasets, workflows, and metadata are saved</small></span><b id="setting-storage-mode">Local</b></div><div class="settings-row"><span class="settings-icon"><i class="bi bi-folder2"></i></span><span><strong>Storage availability</strong><small>Configured storage directories are accessible</small></span><b id="setting-storage-available">Checking…</b></div><div class="settings-row"><span class="settings-icon"><i class="bi bi-file-earmark-arrow-up"></i></span><span><strong>Maximum upload size</strong><small>Per uploaded dataset</small></span><b id="setting-upload-limit">100 MB</b></div><p class="settings-footnote">Change these values with the environment variables in the project's .env file, then restart the Flask server.</p></section>
+            <section class="storage-config-grid" aria-label="Storage configuration">
+              <article class="surface-panel storage-section">
+                <div class="panel-title-row"><div><h2>File System</h2><p>Managed dataset files with JSON application records.</p></div><span class="storage-active-badge" id="storage-filesystem-active">Active</span></div>
+                <dl class="storage-status-grid">
+                  <div><dt>Location</dt><dd id="storage-filesystem-location">Loading…</dd></div>
+                  <div><dt>Storage health</dt><dd id="storage-filesystem-health">Loading…</dd></div>
+                  <div><dt>Available storage</dt><dd id="storage-free-space">Loading…</dd></div>
+                  <div><dt>Total files</dt><dd id="storage-total-files">Loading…</dd></div>
+                  <div><dt>Uploaded datasets</dt><dd id="storage-uploaded-count">Loading…</dd></div>
+                  <div><dt>Processed datasets</dt><dd id="storage-processed-count">Loading…</dd></div>
+                  <div><dt>Maximum upload size</dt><dd id="setting-upload-limit">100 MB</dd></div>
+                </dl>
+                <button class="button-secondary button-sm" id="activate-filesystem" type="button"><i class="bi bi-hdd-stack"></i> Return to File System</button>
+              </article>
+              <article class="surface-panel storage-section">
+                <div class="panel-title-row"><div><h2>PostgreSQL</h2><p>Store application records in PostgreSQL; dataset bytes remain in managed files.</p></div><span class="storage-active-badge" id="storage-postgresql-active">Inactive</span></div>
+                <dl class="storage-status-grid storage-postgres-status-grid">
+                  <div><dt>Active backend</dt><dd id="storage-active-backend">Loading…</dd></div>
+                  <div><dt>Connection</dt><dd id="storage-postgresql-connection">Loading…</dd></div>
+                  <div><dt>Database</dt><dd id="storage-database-status">Unknown</dd></div>
+                  <div><dt>Schema</dt><dd id="storage-schema-status">Unknown</dd></div>
+                  <div><dt>Schema version</dt><dd id="storage-schema-version">Unknown</dd></div>
+                  <div><dt>Storage health</dt><dd id="storage-health">Loading…</dd></div>
+                  <div><dt>Last successful connection</dt><dd id="storage-last-connection">Never</dd></div>
+                  <div><dt>Last initialization</dt><dd id="storage-last-initialization">Never</dd></div>
+                </dl>
+                <form id="postgres-storage-form" class="storage-config-form" autocomplete="off">
+                  <label><span>Host</span><input id="postgres-host" name="host" autocomplete="off" value="localhost" required /></label>
+                  <label><span>Port</span><input id="postgres-port" name="port" type="number" min="1" max="65535" value="5432" required /></label>
+                  <label><span>Database name</span><input id="postgres-database" name="database" autocomplete="off" value="simple_etl_db" required /></label>
+                  <label><span>Username</span><input id="postgres-username" name="username" autocomplete="off" value="postgres" required /></label>
+                  <label><span>Password</span><input id="postgres-password" name="password" type="password" autocomplete="new-password" placeholder="Not saved" /></label>
+                  <label><span>Maintenance database</span><input id="postgres-maintenance-database" name="maintenance_database" autocomplete="off" value="postgres" required /></label>
+                  <div class="storage-actions">
+                    <button class="button-secondary button-sm" id="test-postgresql-connection" type="button"><i class="bi bi-plug"></i> Test connection</button>
+                    <button class="button-secondary button-sm" id="save-postgresql-config" type="button"><i class="bi bi-shield-lock"></i> Save configuration</button>
+                    <button class="button-secondary button-sm" id="clear-postgres-password" type="button" disabled>Remove saved password</button>
+                    <button class="button-secondary button-sm" id="initialize-postgresql" type="button" disabled><i class="bi bi-database-gear"></i> Initialize database</button>
+                    <button class="button-primary button-sm" id="activate-postgresql" type="button" disabled><i class="bi bi-database-check"></i> Activate PostgreSQL</button>
+                  </div>
+                </form>
+                <p class="storage-action-status" id="storage-action-status" role="status" aria-live="polite"></p>
+                <p class="storage-warning">Switching storage does not transfer records. Existing records remain in the storage system where they were created. PostgreSQL initialization creates schema only; it does not import File System records.</p>
+                <button class="button-secondary button-sm" id="refresh-storage-status" type="button"><i class="bi bi-arrow-clockwise"></i> Refresh status</button>
+              </article>
+            </section>
           </section>
         </div>
       </main>
     </div>
 
     <div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="false"></div>
+
+    <dialog class="connection-manager-dialog" id="connection-manager-dialog" aria-labelledby="connection-manager-title">
+      <header class="connection-manager-header"><div><p class="section-overline">EXTERNAL SOURCES</p><h2 id="connection-manager-title">Connection Manager</h2></div><button class="preview-close" id="connection-manager-close" type="button" aria-label="Close connection manager"><i class="bi bi-x-lg"></i></button></header>
+      <div class="connection-manager-body"><div class="connection-manager-toolbar"><p>Credentials are kept in the operating system credential vault.</p><button class="button-primary button-sm" id="connection-create" type="button"><i class="bi bi-plus-lg"></i> New connection</button></div><div id="connection-manager-list"></div><form id="connection-manager-form" hidden></form><p id="connection-manager-status" role="status" aria-live="polite"></p></div>
+    </dialog>
 
     <dialog class="delete-confirm-dialog" id="delete-confirm-dialog" aria-labelledby="delete-confirm-title">
       <div class="delete-confirm-content">

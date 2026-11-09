@@ -3,13 +3,26 @@ import { initFiles, loadFiles } from './files.js'
 import { initWorkflow, loadWorkflows, newWorkflow } from './workflow.js'
 import { initOperations } from './operations.js'
 import { initDashboardDesigner } from './dashboard-designer.js'
+import { initStorageSettings, loadStorageSettings } from './storage-settings.js'
 
 export async function api(path, options = {}) {
   const headers = new Headers(options.headers || {})
+  const protectedConnectionRequest = path.startsWith('/api/connections')
+  let connectionToken = protectedConnectionRequest ? sessionStorage.getItem('simple-etl-connection-token') : null
+  if (connectionToken) headers.set('Authorization', `Bearer ${connectionToken}`)
   if (!(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
-  const response = await fetch(path, { ...options, headers })
+  let response = await fetch(path, { ...options, headers })
+  if (protectedConnectionRequest && response.status === 401) {
+    const enteredToken = window.prompt('Enter the connection access token configured for this installation.')
+    if (enteredToken) {
+      sessionStorage.setItem('simple-etl-connection-token', enteredToken)
+      headers.set('Authorization', `Bearer ${enteredToken}`)
+      response = await fetch(path, { ...options, headers })
+      if (response.status === 401) sessionStorage.removeItem('simple-etl-connection-token')
+    }
+  }
   const payload = await response.json().catch(() => null)
   if (!response.ok) {
     const error = new Error(payload?.error || `Request failed (${response.status})`)
@@ -104,18 +117,8 @@ export function switchPage(page) {
   document.getElementById('breadcrumb-current').textContent = currentLabel || (page === 'dashboard' ? 'Dashboard' : page)
   document.getElementById('sidebar').classList.remove('mobile-open')
   window.dispatchEvent(new CustomEvent('app:pagechange', { detail: { page } }))
-  if (page === 'settings') loadSettings()
-}
-
-async function loadSettings() {
-  try {
-    const health = await api('/api/health')
-    document.getElementById('setting-storage-mode').textContent = health.storage_mode === 'server' ? 'Server' : 'Local'
-    document.getElementById('setting-storage-available').textContent = health.storage_available ? 'Available' : 'Unavailable'
-    document.getElementById('setting-upload-limit').textContent = `${health.max_upload_size_mb} MB`
-    document.getElementById('upload-limit').textContent = String(health.max_upload_size_mb)
-  } catch (error) {
-    showToast(error.message || 'Could not load storage settings.', 'error')
+  if (page === 'settings') {
+    loadStorageSettings().catch((error) => showToast(error.message || 'Could not load storage settings.', 'error'))
   }
 }
 
@@ -176,6 +179,7 @@ initializeShell()
 initFiles()
 initWorkflow()
 initOperations()
+initStorageSettings()
 Promise.all([loadVendorScript('/vendor/echarts.js'), loadVendorScript('/vendor/html-to-image.js')])
   .then(() => initDashboardDesigner())
   .catch((error) => {

@@ -1,9 +1,13 @@
 import { api, escapeHTML, showToast, switchPage } from './app.js'
+import { connectionRecordsFor, initConnectionManager, loadConnections, openConnectionManager } from './connections.js'
 
 const definitions = {
   csv_input: { title: 'CSV Input', group: 'Input', description: 'Choose a CSV dataset to associate with this workflow.', icon: 'bi-filetype-csv', color: 'input' },
   excel_input: { title: 'Excel Input', group: 'Input', description: 'Choose an XLSX workbook for this workflow.', icon: 'bi-file-earmark-spreadsheet', color: 'input' },
   json_input: { title: 'JSON Input', group: 'Input', description: 'Choose a JSON dataset to associate with this workflow.', icon: 'bi-braces', color: 'input' },
+  mysql_input: { title: 'MySQL Input', group: 'Database source', description: 'Read rows from a saved MySQL connection.', icon: 'bi-database', color: 'input' },
+  postgresql_input: { title: 'PostgreSQL Input', group: 'Database source', description: 'Read rows from a saved PostgreSQL connection.', icon: 'bi-database', color: 'input' },
+  api_input: { title: 'REST API Input', group: 'API source', description: 'Read JSON or CSV records from a saved API connection.', icon: 'bi-cloud-arrow-down', color: 'input' },
   clean_data: { title: 'Clean Data', group: 'Transformation', description: 'Apply a selected cleaning operation to the incoming dataset.', icon: 'bi-magic', color: 'transform' },
   remove_duplicates: { title: 'Remove Duplicates', group: 'Transformation', description: 'Choose which imported columns to compare for duplicate handling.', icon: 'bi-copy', color: 'transform' },
   filter_rows: { title: 'Filter Rows', group: 'Transformation', description: 'Keep rows that match a configured condition.', icon: 'bi-funnel', color: 'transform' },
@@ -175,6 +179,11 @@ function fileChoices(extensions) {
   return [{ value: '', label: eligible.length ? 'Choose a dataset' : 'Upload a compatible dataset first' }, ...eligible.map((file) => ({ value: file.file_id, label: file.filename }))]
 }
 
+function connectionChoices(kind) {
+  const records = connectionRecordsFor(kind)
+  return [{ value: '', label: records.length ? 'Choose a saved connection' : 'Create a connection first' }, ...records.map((record) => ({ value: record.connection_id, label: record.name }))]
+}
+
 const datasetColumns = new Map()
 
 function sourceFilesForNode(node, sourceIndex = null) {
@@ -200,6 +209,69 @@ function sourceFilesForNode(node, sourceIndex = null) {
   return [...fileIds].map((fileId) => uploadedFiles.find((file) => file.file_id === fileId)).filter(Boolean)
 }
 
+function sourceNodesForNode(node, sourceIndex = null) {
+  const found = new Map()
+  const visited = new Set()
+  function visit(nodeId) {
+    if (visited.has(nodeId)) return
+    visited.add(nodeId)
+    const current = nodes.find((item) => item.id === nodeId)
+    if (!current) return
+    if (current.type.endsWith('_input')) {
+      found.set(current.id, current)
+      return
+    }
+    edges.filter((edge) => edge.target === nodeId).forEach((edge) => visit(edge.source))
+  }
+  if (node.type.endsWith('_input')) return [node]
+  if (sourceIndex === null) visit(node.id)
+  else {
+    const parents = edges.filter((edge) => edge.target === node.id)
+    if (parents[sourceIndex]) visit(parents[sourceIndex].source)
+  }
+  return [...found.values()]
+}
+
+function inputIsConfigured(node) {
+  return node.type === 'csv_input' || node.type === 'excel_input' || node.type === 'json_input'
+    ? Boolean(node.config.file_id)
+    : Boolean(node.config.connection_id)
+}
+
+function externalSettings(node) {
+  if (node.type === 'mysql_input') return {
+    table: node.config.table,
+    query: node.config.query,
+    query_parameters: node.config.query_parameters,
+  }
+  if (node.type === 'postgresql_input') return {
+    schema: node.config.schema,
+    table: node.config.table,
+    query: node.config.query,
+    query_parameters: node.config.query_parameters,
+  }
+  return {
+    data_path: node.config.data_path,
+    field_mapping: node.config.field_mapping,
+    pagination: node.config.pagination,
+    query_params: node.config.query_params,
+    response_format: node.config.response_format || 'auto',
+  }
+}
+
+async function loadInputColumns(node) {
+  if (node.type === 'csv_input' || node.type === 'excel_input' || node.type === 'json_input') {
+    const file = uploadedFiles.find((item) => item.file_id === node.config.file_id)
+    return file ? loadDatasetColumns(file) : []
+  }
+  if (!node.config.connection_id) return []
+  const preview = await api(`/api/connections/${encodeURIComponent(node.config.connection_id)}/preview`, {
+    method: 'POST',
+    body: JSON.stringify(externalSettings(node)),
+  })
+  return preview.columns || []
+}
+
 function connectionDetails(node) {
   const incoming = edges.filter((edge) => edge.target === node.id)
     .map((edge) => nodes.find((item) => item.id === edge.source)?.name)
@@ -207,12 +279,12 @@ function connectionDetails(node) {
   const outgoing = edges.filter((edge) => edge.source === node.id)
     .map((edge) => nodes.find((item) => item.id === edge.target)?.name)
     .filter(Boolean)
-  return `<div class="node-connection-info"><strong>Connections</strong><span>From: ${escapeHTML(incoming.join(', ') || (node.type.endsWith('_input') ? 'Source dataset' : 'None'))}</span><span>To: ${escapeHTML(outgoing.join(', ') || (node.type.endsWith('_output') ? 'Workflow output' : 'None'))}</span></div>`
+  const sourceLabel = ['mysql_input', 'postgresql_input', 'api_input'].includes(node.type) ? 'Saved connection' : 'Source dataset'
+  return `<div class="node-connection-info"><strong>Connections</strong><span>From: ${escapeHTML(incoming.join(', ') || (node.type.endsWith('_input') ? sourceLabel : 'None'))}</span><span>To: ${escapeHTML(outgoing.join(', ') || (node.type.endsWith('_output') ? 'Workflow output' : 'None'))}</span></div>`
 }
 
 function hasConfiguredUpstream(node) {
-  if (node.type.endsWith('_input')) return sourceFilesForNode(node).length > 0
-  return sourceFilesForNode(node).length > 0
+  return sourceNodesForNode(node).some(inputIsConfigured)
 }
 
 function loadDatasetColumns(file) {
@@ -234,9 +306,9 @@ async function populateColumnSelectors(node, renderVersion) {
   try {
     const selectColumns = async (select) => {
       const sourceIndex = select.dataset.sourceIndex === undefined ? null : Number(select.dataset.sourceIndex)
-      const sourceFiles = sourceFilesForNode(node, sourceIndex)
-      const columnsByFile = await Promise.all(sourceFiles.map((file) => loadDatasetColumns(file)))
-      return [...new Set(columnsByFile.flat())]
+      const sourceNodes = sourceNodesForNode(node, sourceIndex)
+      const sourceColumns = await Promise.all(sourceNodes.map(loadInputColumns))
+      return [...new Set(sourceColumns.flat())]
     }
     const columnsBySelector = await Promise.all(Array.from(selectors, selectColumns))
     if (selectedNodeId !== node.id || renderVersion !== configRenderVersion) return
@@ -244,10 +316,10 @@ async function populateColumnSelectors(node, renderVersion) {
       const selectedValues = new Set(JSON.parse(select.dataset.initialValues || '[]'))
       const columns = columnsBySelector[index]
       const sourceIndex = select.dataset.sourceIndex === undefined ? null : Number(select.dataset.sourceIndex)
-      const sourceFiles = sourceFilesForNode(node, sourceIndex)
+      const sourceNodes = sourceNodesForNode(node, sourceIndex)
       const choices = columns.length
         ? [...(select.dataset.emptyChoice ? [{ value: '', label: 'No specific columns' }] : []), ...columns.map((column) => ({ value: column, label: column }))]
-        : [{ value: '', label: sourceFiles.length ? 'No columns found in dataset' : 'Connect an input dataset first', disabled: true }]
+        : [{ value: '', label: sourceNodes.some(inputIsConfigured) ? 'No columns found in source preview' : 'Configure an input source first', disabled: true }]
       const hasSelection = selectedValues.size > 0
       select.innerHTML = choices.map((choice) => `<option value="${escapeHTML(choice.value)}" ${selectedValues.has(String(choice.value)) || (choice.value === '' && !hasSelection && Boolean(select.dataset.emptyChoice)) ? 'selected' : ''} ${choice.disabled ? 'disabled' : ''}>${escapeHTML(choice.label)}</option>`).join('')
       select.disabled = !columns.length
@@ -288,6 +360,8 @@ function renderConfig() {
     previewPage = 1
     if (runNodeStatuses[node.id]?.status === 'success' && lastExecutionId) {
       loadNodePreview(node, previewPage, '')
+    } else if (['mysql_input', 'postgresql_input', 'api_input'].includes(node.type) && inputIsConfigured(node)) {
+      loadLiveSourcePreview(node)
     } else if (!hasConfiguredUpstream(node)) {
       document.getElementById('node-preview-state').innerHTML = '<strong>No upstream data available.</strong><p>Connect this node to a valid input and select a dataset for the input node.</p>'
     } else {
@@ -301,7 +375,9 @@ function renderConfig() {
   const previewResultElement = document.getElementById('node-preview-result')
   previewResultElement.innerHTML = ''
   if (!hasConfiguredUpstream(node)) {
-    previewStateElement.innerHTML = '<strong>No upstream data available. Connect this node to a valid input.</strong><p>Select a dataset for the input node, then run the workflow.</p>'
+    previewStateElement.innerHTML = ['mysql_input', 'postgresql_input', 'api_input'].includes(node.type)
+      ? '<strong>No external connection selected.</strong><p>Choose a saved connection in Node Settings to preview actual source records.</p>'
+      : '<strong>No upstream data available. Connect this node to a valid input.</strong><p>Select a dataset for the input node, then run the workflow.</p>'
   } else if (previewError) {
     previewStateElement.innerHTML = `<strong>Preview unavailable.</strong><p>${escapeHTML(previewError)}</p>`
   } else if (!lastExecutionId) {
@@ -325,6 +401,28 @@ function renderConfig() {
   if (node.type === 'csv_input') fields += formField('Dataset', 'file_id', node.config.file_id, { choices: fileChoices(['csv']) })
   if (node.type === 'excel_input') fields += formField('Dataset', 'file_id', node.config.file_id, { choices: fileChoices(['xlsx']) })
   if (node.type === 'json_input') fields += formField('Dataset', 'file_id', node.config.file_id, { choices: fileChoices(['json']) })
+  if (node.type === 'mysql_input' || node.type === 'postgresql_input' || node.type === 'api_input') {
+    const kind = node.type === 'mysql_input' ? 'mysql' : node.type === 'postgresql_input' ? 'postgresql' : 'api'
+    fields += formField('Saved connection', 'connection_id', node.config.connection_id, { choices: connectionChoices(kind) })
+    fields += '<button class="button-secondary button-sm connection-manager-open" type="button"><i class="bi bi-gear"></i> Manage connections</button>'
+    if (node.type === 'mysql_input') {
+      fields += formField('Table', 'table', node.config.table, { choices: [{ value: node.config.table || '', label: node.config.table || 'Select a saved connection first' }] })
+      fields += formField('Custom SELECT query (optional)', 'query', node.config.query, { multiline: true, placeholder: 'SELECT id, amount FROM sales WHERE amount > :minimum' })
+      fields += formField('Query parameters (JSON)', 'query_parameters', JSON.stringify(node.config.query_parameters || {}, null, 2), { multiline: true, placeholder: '{"minimum": 10}' })
+    } else if (node.type === 'postgresql_input') {
+      fields += formField('Schema', 'schema', node.config.schema || 'public', { choices: [{ value: node.config.schema || 'public', label: node.config.schema || 'public' }] })
+      fields += formField('Table', 'table', node.config.table, { choices: [{ value: node.config.table || '', label: node.config.table || 'Select a schema first' }] })
+      fields += formField('Custom SELECT query (optional)', 'query', node.config.query, { multiline: true, placeholder: 'SELECT id, amount FROM sales WHERE amount > :minimum' })
+      fields += formField('Query parameters (JSON)', 'query_parameters', JSON.stringify(node.config.query_parameters || {}, null, 2), { multiline: true, placeholder: '{"minimum": 10}' })
+    } else {
+      fields += formField('Nested data path', 'data_path', node.config.data_path, { placeholder: 'data.results' })
+      fields += formField('Response format', 'response_format', node.config.response_format || 'auto', { choices: [{ value: 'auto', label: 'Detect JSON or CSV' }, { value: 'json', label: 'JSON' }, { value: 'csv', label: 'CSV' }] })
+      fields += formField('Field mapping (JSON)', 'field_mapping', JSON.stringify(node.config.field_mapping || {}, null, 2), { multiline: true, placeholder: '{"source_field": "column_name"}' })
+      fields += formField('Query parameters (JSON)', 'query_params', JSON.stringify(node.config.query_params || {}, null, 2), { multiline: true, placeholder: '{"region": "north"}' })
+      fields += formField('Pagination (JSON)', 'pagination', JSON.stringify(node.config.pagination || { mode: 'none' }, null, 2), { multiline: true, placeholder: '{"mode":"page","page_param":"page","size_param":"page_size","page_size":100,"max_pages":10}' })
+    }
+    fields += '<button class="button-secondary button-sm" type="button" id="preview-external-source"><i class="bi bi-eye"></i> Preview source</button>'
+  }
   if (node.type === 'clean_data') {
     fields += formField('Operation', 'operation', node.config.operation || 'trim_text', { choices: [{ value: 'trim_text', label: 'Trim spaces' }, { value: 'uppercase', label: 'Uppercase text' }, { value: 'lowercase', label: 'Lowercase text' }, { value: 'titlecase', label: 'Title case' }, { value: 'replace_text', label: 'Replace text' }, { value: 'remove_unwanted_characters', label: 'Remove unwanted characters' }, { value: 'fill_missing', label: 'Fill missing values' }, { value: 'remove_missing_rows', label: 'Remove rows with missing values' }, { value: 'remove_missing_columns', label: 'Remove columns with missing values' }, { value: 'remove_duplicates', label: 'Remove duplicates' }, { value: 'convert_type', label: 'Convert data type' }, { value: 'remove_columns', label: 'Remove columns' }, { value: 'select_columns', label: 'Select columns' }, { value: 'rename_column', label: 'Rename a column' }] })
     fields += formField('Column', 'column', node.config.column, { choices: [{ value: '', label: 'Loading imported columns...' }], datasetColumn: true })
@@ -371,15 +469,39 @@ function renderConfig() {
     event.currentTarget.querySelectorAll('select[multiple]').forEach((select) => {
     values[select.name] = Array.from(select.selectedOptions, (option) => option.value).filter(Boolean)
     })
+    try {
+      for (const key of ['query_parameters', 'field_mapping', 'query_params', 'pagination']) {
+        if (typeof values[key] === 'string') values[key] = JSON.parse(values[key] || '{}')
+      }
+    } catch {
+      showToast('JSON settings must contain valid JSON.', 'error')
+      return
+    }
     node.config = values
     markUnsaved()
     showToast('Node settings saved to this workflow design.')
     renderNodes()
     renderConfig()
   })
+  content.querySelector('.connection-manager-open')?.addEventListener('click', () => openConnectionManager())
+  document.getElementById('config-connection_id')?.addEventListener('change', () => populateExternalSourceFields(node, renderVersion))
+  document.getElementById('config-schema')?.addEventListener('change', () => populateExternalSourceFields(node, renderVersion))
+  document.getElementById('preview-external-source')?.addEventListener('click', () => {
+    try {
+      const values = Object.fromEntries(new FormData(document.getElementById('node-config-form')).entries())
+      for (const key of ['query_parameters', 'field_mapping', 'query_params', 'pagination']) {
+        if (typeof values[key] === 'string') values[key] = JSON.parse(values[key] || '{}')
+      }
+      loadLiveSourcePreview(node, values)
+    } catch {
+      showToast('JSON settings must contain valid JSON.', 'error')
+    }
+  })
+  if (node.type === 'mysql_input' || node.type === 'postgresql_input') populateExternalSourceFields(node, renderVersion)
   document.getElementById('cancel-node-config').addEventListener('click', renderConfig)
   document.getElementById('remove-selected-node').addEventListener('click', () => removeNode(node.id))
   if (previewReady) loadNodePreview(node, previewPage, '')
+  else if (['mysql_input', 'postgresql_input', 'api_input'].includes(node.type) && inputIsConfigured(node)) loadLiveSourcePreview(node)
 }
 
 async function loadNodePreview(node, page, query) {
@@ -426,6 +548,75 @@ async function loadNodePreview(node, page, query) {
   } catch (error) {
     if (requestId === previewRequestId && selectedNodeId === node.id && lastExecutionId === executionId) {
       state.innerHTML = `<strong>Preview unavailable.</strong><p>${escapeHTML(error.payload?.error || error.message)}</p>`
+      target.innerHTML = ''
+    }
+  }
+}
+
+async function populateExternalSourceFields(node, renderVersion) {
+  const connectionSelect = document.getElementById('config-connection_id')
+  if (!connectionSelect) return
+  const connectionId = connectionSelect.value
+  const schemaSelect = document.getElementById('config-schema')
+  const tableSelect = document.getElementById('config-table')
+  if (!connectionId) {
+    if (tableSelect) tableSelect.innerHTML = '<option value="">Choose a saved connection first</option>'
+    return
+  }
+  try {
+    const schema = schemaSelect?.value || node.config.schema || ''
+    const query = schema ? `?schema=${encodeURIComponent(schema)}` : ''
+    const result = await api(`/api/connections/${encodeURIComponent(connectionId)}/tables${query}`)
+    if (selectedNodeId !== node.id || renderVersion !== configRenderVersion) return
+    if (schemaSelect && Array.isArray(result.schemas)) {
+      const selectedSchema = result.schema || schema || 'public'
+      schemaSelect.innerHTML = result.schemas.map((name) => `<option value="${escapeHTML(name)}" ${name === selectedSchema ? 'selected' : ''}>${escapeHTML(name)}</option>`).join('')
+    }
+    if (tableSelect && Array.isArray(result.tables)) {
+      const selectedTable = node.config.table || ''
+      tableSelect.innerHTML = `<option value="">Choose a table</option>${result.tables.map((name) => `<option value="${escapeHTML(name)}" ${name === selectedTable ? 'selected' : ''}>${escapeHTML(name)}</option>`).join('')}`
+    }
+  } catch (error) {
+    if (selectedNodeId === node.id && renderVersion === configRenderVersion) {
+      const state = document.getElementById('node-preview-state')
+      state.innerHTML = `<strong>Table list unavailable.</strong><p>${escapeHTML(error.message)}</p>`
+    }
+  }
+}
+
+async function loadLiveSourcePreview(node, overrideConfig = null) {
+  const state = document.getElementById('node-preview-state')
+  const target = document.getElementById('node-preview-result')
+  const config = overrideConfig || node.config
+  const connectionId = config.connection_id || node.config.connection_id
+  if (!connectionId) {
+    state.innerHTML = '<strong>Choose a saved connection first.</strong>'
+    target.innerHTML = ''
+    return
+  }
+  const requestId = ++previewRequestId
+  state.innerHTML = '<strong>Reading source data…</strong><p>Fetching up to 100 real records.</p>'
+  target.innerHTML = ''
+  try {
+    const data = await api(`/api/connections/${encodeURIComponent(connectionId)}/preview`, {
+      method: 'POST',
+      body: JSON.stringify(config),
+    })
+    if (requestId !== previewRequestId || selectedNodeId !== node.id) return
+    const columns = (data.columns || []).map((name) => `<th><span>${escapeHTML(name)}</span></th>`).join('')
+    const rows = (data.rows || []).map((row) => `<tr>${row.map((value) => `<td>${escapeHTML(value ?? '')}</td>`).join('')}</tr>`).join('')
+    const details = [
+      `${Number(data.row_count ?? data.total_rows ?? 0).toLocaleString()} records retrieved`,
+      `${Number(data.column_count ?? data.columns?.length ?? 0).toLocaleString()} columns`,
+      data.http_status ? `HTTP ${data.http_status}` : null,
+      data.pages_fetched ? `${data.pages_fetched} pages` : null,
+      data.duration_seconds !== undefined ? `${data.duration_seconds}s` : null,
+    ].filter(Boolean).join(' · ')
+    state.innerHTML = `<strong>${escapeHTML(node.name)}</strong><p>${escapeHTML(details)} · Actual source preview</p>`
+    target.innerHTML = `<div class="node-preview-table-wrap"><table class="studio-table"><thead><tr>${columns}</tr></thead><tbody>${rows || `<tr><td class="table-empty" colspan="${data.columns?.length || 1}">No records returned.</td></tr>`}</tbody></table></div>`
+  } catch (error) {
+    if (requestId === previewRequestId && selectedNodeId === node.id) {
+      state.innerHTML = `<strong>Source preview unavailable.</strong><p>${escapeHTML(error.message || 'The source could not be read.')}</p>`
       target.innerHTML = ''
     }
   }
@@ -880,7 +1071,11 @@ export function initWorkflow() {
   document.getElementById('workflow-name').addEventListener('input', markUnsaved)
   window.addEventListener('app:pagechange', async (event) => {
     if (event.detail.page !== 'workflow') return
-    await Promise.all([loadWorkflows(), loadFilesForNodes()])
+    await Promise.all([loadWorkflows(), loadFilesForNodes(), loadConnections().catch(() => [])])
+    if (selectedNodeId) renderConfig()
+  })
+  initConnectionManager()
+  window.addEventListener('connections:changed', () => {
     if (selectedNodeId) renderConfig()
   })
   window.addEventListener('app:refresh', loadWorkflows)

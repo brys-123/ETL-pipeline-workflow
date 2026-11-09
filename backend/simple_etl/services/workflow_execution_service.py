@@ -15,7 +15,9 @@ from .cleaning_service import CleaningError, apply_cleaning
 from .dataset_service import DatasetService
 from .metadata_service import MetadataService
 from .storage_service import FileSystemStorage
-from .workflow_graph import INPUT_TYPES, OUTPUT_TYPES, PREVIEW_TYPES, plan_workflow
+from .connection_manager import ConnectionManager
+from .external_sources import ExternalSourceError, ExternalSourceService, MAX_EXTRACT_ROWS
+from .workflow_graph import EXTERNAL_INPUT_TYPES, FILE_INPUT_TYPES, INPUT_TYPES, OUTPUT_TYPES, PREVIEW_TYPES, plan_workflow
 
 _execution_lock = threading.Lock()
 _logger = logging.getLogger(__name__)
@@ -161,6 +163,24 @@ class WorkflowExecutionService:
         self.storage = storage
         self.metadata = MetadataService(storage)
         self.datasets = DatasetService(storage)
+        self.connections = ConnectionManager(storage)
+        self.external_sources = ExternalSourceService()
+
+    def _read_input(self, node: dict[str, Any]) -> tuple[pd.DataFrame, str, dict[str, Any]]:
+        node_type = node["type"]
+        config = node.get("config", {})
+        if node_type in FILE_INPUT_TYPES:
+            source = self.metadata.get_file(config.get("file_id"))
+            if not source or source.get("status") != "uploaded":
+                raise WorkflowExecutionError("The selected input dataset no longer exists.", node["id"])
+            return self.datasets.read(source), source["filename"], {}
+        connection_id = config.get("connection_id")
+        try:
+            connection, secrets = self.connections.get_with_secrets(connection_id)
+            frame, metrics = self.external_sources.extract(connection, secrets, config, MAX_EXTRACT_ROWS)
+        except (ExternalSourceError, ValueError, RuntimeError) as exc:
+            raise WorkflowExecutionError(str(exc), node["id"]) from None
+        return frame, connection["name"], metrics
 
     def _validate(self, workflow: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str], dict[str, str]]:
         ordered_nodes, errors = plan_workflow(workflow, self.metadata)
@@ -179,10 +199,7 @@ class WorkflowExecutionService:
             parents = [edge["source"] for edge in edges if edge["target"] == node_id]
             try:
                 if node_type in INPUT_TYPES:
-                    source = self.metadata.get_file(node.get("config", {}).get("file_id"))
-                    if not source or source.get("status") != "uploaded":
-                        raise WorkflowExecutionError("The selected input dataset no longer exists.", node_id)
-                    frame_by_node[node_id] = self.datasets.read(source)
+                    frame_by_node[node_id], _source_name, _metrics = self._read_input(node)
                     continue
                 inputs = [frame_by_node[parent_id] for parent_id in parents]
                 if node_type in OUTPUT_TYPES:
@@ -330,7 +347,7 @@ class WorkflowExecutionService:
                     continue
                 ancestors.add(ancestor_id)
                 stack.extend(edge["source"] for edge in edges if edge["target"] == ancestor_id)
-            return [
+                return [
                 node for node in ordered_nodes
                 if node["id"] in ancestors and node["type"] in INPUT_TYPES
             ]
@@ -354,13 +371,17 @@ class WorkflowExecutionService:
                 self.metadata.save_execution(record)
                 try:
                     if node_type in INPUT_TYPES:
-                        file_id = node.get("config", {}).get("file_id")
-                        source = self.metadata.get_file(file_id)
-                        if not source or source.get("status") != "uploaded":
-                            raise WorkflowExecutionError("The selected input dataset no longer exists.", node_id)
-                        frame_by_node[node_id] = self.datasets.read(source)
-                        if file_id not in record["input_file_ids"]:
-                            record["input_file_ids"].append(file_id)
+                        frame_by_node[node_id], source_name, source_metrics = self._read_input(node)
+                        if node_type in FILE_INPUT_TYPES:
+                            file_id = node.get("config", {}).get("file_id")
+                            if file_id not in record["input_file_ids"]:
+                                record["input_file_ids"].append(file_id)
+                        else:
+                            record.setdefault("input_sources", []).append({
+                                "connection_id": node.get("config", {}).get("connection_id"),
+                                "name": source_name,
+                            })
+                            record["node_statuses"][node_id]["source_metrics"] = source_metrics
                         rows = len(frame_by_node[node_id])
                     else:
                         inputs = [frame_by_node[parent_id] for parent_id in parent_ids]
@@ -385,9 +406,7 @@ class WorkflowExecutionService:
                                 "last_updated": utc_now(),
                                 "status": "processed",
                                 "stored_name": f"{file_id}{extension}",
-                                "source_file_ids": [
-                                    node["config"]["file_id"] for node in input_ancestors(node_id)
-                                ],
+                                "source_file_ids": [node["config"]["file_id"] for node in input_ancestors(node_id) if node["type"] in FILE_INPUT_TYPES],
                                 "workflow_id": workflow["workflow_id"],
                                 "output_node_id": node_id,
                                 "execution_id": execution_id,
@@ -416,9 +435,13 @@ class WorkflowExecutionService:
                         for column in frame.columns
                     ]
                     source_names = [
-                        source["filename"]
+                        source["filename"] if ancestor["type"] in FILE_INPUT_TYPES else self.metadata.get_connection(ancestor.get("config", {}).get("connection_id"))["name"]
                         for ancestor in input_ancestors(node_id)
-                        if (source := self.metadata.get_file(ancestor.get("config", {}).get("file_id")))
+                        if (
+                            (source := self.metadata.get_file(ancestor.get("config", {}).get("file_id")))
+                            if ancestor["type"] in FILE_INPUT_TYPES
+                            else self.metadata.get_connection(ancestor.get("config", {}).get("connection_id"))
+                        )
                     ]
                     self.datasets.write_preview(frame, execution_id, node_id)
                     output_metadata = {
@@ -478,7 +501,9 @@ class WorkflowExecutionService:
                     "input_columns": max((len(frame.columns) for frame in input_frames), default=0),
                     "final_columns": max((len(frame.columns) for frame in output_frames), default=0),
                     "duration_seconds": round(time.perf_counter() - started_clock, 4),
-                    "input_datasets": [self.metadata.get_file(file_id)["filename"] for file_id in record["input_file_ids"]],
+                    "input_datasets": [
+                        self.metadata.get_file(file_id)["filename"] for file_id in record["input_file_ids"]
+                    ] + [item["name"] for item in record.get("input_sources", [])],
                     "output_datasets": [item["filename"] for item in output_records],
                 },
             })

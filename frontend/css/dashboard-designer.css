@@ -97,12 +97,13 @@
 
 @media (max-width: 1250px) {
   .designer-layout { grid-template-columns: 200px minmax(0,1fr); }
-  .designer-config { position: static !important; grid-column: 1 / -1; max-height: none !important; }
+  .designer-layout .surface-panel.designer-config { position: static; grid-column: 1 / -1; max-height: none; }
   .designer-config-content { grid-template-columns: repeat(auto-fit,minmax(190px,1fr)); }
 }
 @media (max-width: 760px) {
   .designer-layout { grid-template-columns: minmax(0,1fr); gap: 10px; }
-  .designer-library, .designer-config { position: static !important; grid-column: auto; max-height: none !important; }
+  .designer-layout .surface-panel.designer-library,
+  .designer-layout .surface-panel.designer-config { position: static; grid-column: auto; max-height: none; }
   .designer-component-list { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .designer-component-list button { min-width: 0; }
   .designer-canvas-column { min-height: 520px; }
@@ -126,4 +127,61 @@
   body.dashboard-presentation .page-container { padding: 0; }
   body.dashboard-presentation .designer-layout { display: block; }
   body.dashboard-presentation .designer-canvas-column, body.dashboard-presentation .designer-canvas-scroll { overflow: visible; border: 0; padding: 0; }
+}
+
+/* Dashboard Designer controls and rendered report typography. */
+.designer-heading h1 { color: #14532d; font-size: 28px; font-weight: 650; letter-spacing: 0; }
+.designer-heading > p:last-child { color: #52645a; font-size: 14px; }
+.designer-toolbar { border-color: #d5e4da; background: #fff; }
+.designer-toolbar > label > span { color: #14532d; font-size: 13px; font-weight: 600; letter-spacing: 0; }
+.designer-toolbar input, .designer-toolbar select, .designer-toolbar > select { min-height: 38px; height: auto; border-color: #a9c2b1; color: #172b22; background: #fff; font-size: 14px; }
+.designer-toolbar input::placeholder { color: #52645a; opacity: 1; }
+.designer-toolbar .toolbar-button { min-height: 38px; color: #14532d; border-color: #a9c2b1; background: #fff; font-size: 13px; }
+.designer-toolbar .toolbar-button:hover { border-color: #15803d; background: #dcfce7; }
+.designer-panel-heading h2 { color: #14532d; font-size: 18px; font-weight: 600; }
+.designer-panel-heading p { color: #52645a; font-size: 13px; }
+.designer-search { min-height: 38px; height: auto; color: #14532d; border-color: #a9c2b1; }
+.designer-search input { color: #172b22; font-size: 14px; }
+.designer-search input::placeholder { color: #52645a; opacity: 1; }
+.designer-component-group h3, .designer-config-section h3 { color: #14532d; font-size: 13px; font-weight: 600; letter-spacing: 0; }
+.designer-component-list button { min-height: 50px; border-color: #d5e4da; color: #172b22; background: #fff; }
+.designer-component-list button > span { color: #172b22; font-size: 14px; }
+.designer-component-list small, .designer-template-list small { color: #52645a; font-size: 12px; }
+.designer-template-list button { color: #14532d; background: #f0fdf4; font-size: 13px; }
+.designer-canvas-toolbar { min-height: 42px; color: #14532d; background: #fff; font-size: 13px; }
+.designer-canvas-toolbar #designer-dataset-info { color: #52645a; }
+.dashboard-canvas { color: #172b22; font-family: var(--font-body); }
+.dashboard-report-header #dashboard-report-eyebrow { color: #14532d; font-size: 12px; letter-spacing: .04em; }
+.dashboard-report-header h2 { color: #14532d; font-size: 24px; font-weight: 600; }
+.dashboard-report-header #dashboard-report-subtitle { color: #52645a; font-size: 13px; }
+.dashboard-report-header #dashboard-report-date { color: #52645a; font-size: 12px; }
+.dashboard-filter { color: #14532d; font-size: 13px; font-weight: 600; }
+.dashboard-filter select, .dashboard-filter input { min-height: 38px; height: auto; border-color: #a9c2b1; color: #172b22; background: #fff; font-size: 14px; }
+.dashboard-card-header { min-height: 48px; border-color: #d5e4da; }
+.dashboard-card-header h3 { color: #172b22; font-size: 15px; font-weight: 600; }
+.dashboard-card-header button { color: #14532d; background: #f0fdf4; }
+.dashboard-kpi strong { color: #14532d; font-size: 30px; letter-spacing: 0; }
+.dashboard-kpi span { color: #52645a; font-size: 13px; }
+.dashboard-table { color: #172b22; font-size: 13px; }
+.dashboard-table th, .dashboard-table td { padding: 9px; border-color: #d5e4da; }
+.dashboard-table th { color: #14532d; background: #ecfdf5; font-size: 13px; font-weight: 600; }
+.dashboard-chart-warning, .dashboard-empty { color: #52645a; font-size: 13px; }
+.dashboard-empty strong { color: #14532d; font-size: 15px; }
+.dashboard-empty p { color: #52645a; font-size: 13px; }
+.designer-config-section { border-color: #d5e4da; background: #fff; }
+.designer-config-field, .designer-config-dataset { color: #172b22; font-size: 13px; font-weight: 500; }
+.designer-config-dataset strong { color: #52645a; font-size: 13px; }
+.designer-config-field input:not([type="checkbox"]):not([type="radio"]),
+.designer-config-field select, .designer-config-field textarea { min-height: 38px; border-color: #a9c2b1; color: #172b22; background: #fff; font-size: 14px; }
+.designer-config-field input::placeholder, .designer-config-field textarea::placeholder { color: #52645a; opacity: 1; }
+.designer-config-note, .designer-config-warning { color: #52645a; font-size: 13px; }
+.designer-config-warning { border-color: #a9c2b1; background: #f0fdf4; }
+.designer-config-actions button { min-height: 36px; border-color: #a9c2b1; color: #14532d; background: #fff; font-size: 13px; }
+.designer-config-actions button.danger { color: #14532d; border-color: #a9c2b1; background: #ecfdf5; }
+.designer-config-field input[type="checkbox"], .designer-config-field input[type="radio"] { accent-color: #15803d; }
+
+@media (max-width: 760px) {
+  .designer-heading h1 { font-size: 25px; }
+  .designer-toolbar .toolbar-button { min-height: 40px; }
+  .dashboard-report-header h2 { font-size: 21px; }
 }

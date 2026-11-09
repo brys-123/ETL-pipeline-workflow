@@ -2,7 +2,9 @@ from collections import defaultdict, deque
 from typing import Any
 
 
-INPUT_TYPES = {"csv_input": "csv", "excel_input": "xlsx", "json_input": "json"}
+FILE_INPUT_TYPES = {"csv_input": "csv", "excel_input": "xlsx", "json_input": "json"}
+EXTERNAL_INPUT_TYPES = {"mysql_input": "mysql", "postgresql_input": "postgresql", "api_input": "api"}
+INPUT_TYPES = {**FILE_INPUT_TYPES, **EXTERNAL_INPUT_TYPES}
 TRANSFORM_TYPES = {
     "clean_data",
     "remove_duplicates",
@@ -81,11 +83,16 @@ def plan_workflow(workflow: dict[str, Any], metadata: Any) -> tuple[list[dict[st
         if node_type not in NODE_TYPES:
             errors.append(f"Node {node.get('name', node_id)} has an unsupported type.")
             continue
-        if node_type in INPUT_TYPES:
+        if node_type in FILE_INPUT_TYPES:
             file_id = config.get("file_id")
             record = metadata.get_file(file_id) if isinstance(file_id, str) else None
-            if not record or record.get("file_type") != INPUT_TYPES[node_type] or record.get("status") != "uploaded":
-                errors.append(f"Select an existing {INPUT_TYPES[node_type].upper()} dataset for {node.get('name', node_id)}.")
+            if not record or record.get("file_type") != FILE_INPUT_TYPES[node_type] or record.get("status") != "uploaded":
+                errors.append(f"Select an existing {FILE_INPUT_TYPES[node_type].upper()} dataset for {node.get('name', node_id)}.")
+        elif node_type in EXTERNAL_INPUT_TYPES:
+            connection_id = config.get("connection_id")
+            connection = metadata.get_connection(connection_id) if isinstance(connection_id, str) else None
+            if not connection or connection.get("kind") != EXTERNAL_INPUT_TYPES[node_type]:
+                errors.append(f"Select a saved {EXTERNAL_INPUT_TYPES[node_type]} connection for {node.get('name', node_id)}.")
         elif node_type == "merge_data":
             if len(parents) != 2:
                 errors.append(f"Merge node {node.get('name', node_id)} needs exactly two connected input datasets.")

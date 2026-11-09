@@ -5,13 +5,14 @@ from typing import Any
 from .storage_service import FileSystemStorage
 
 
-class MetadataService:
+class FileSystemMetadataBackend:
     DATASET_REFERENCE_KEYS = {"file_id", "dataset_id", "dataset", "data_source"}
 
     def __init__(self, storage: FileSystemStorage):
         self.storage = storage
         self.files_index = storage.metadata_dir / "files.json"
         self.executions_index = storage.metadata_dir / "executions.json"
+        self.connections_index = storage.metadata_dir / "connections.json"
         self.datasets_dir = storage.datasets_dir
 
     @staticmethod
@@ -211,8 +212,46 @@ class MetadataService:
         executions.append(record)
         self.storage.write_json(self.executions_index, executions)
 
+    def list_connections(self) -> list[dict[str, Any]]:
+        records = self.storage.read_json(self.connections_index, [])
+        if not isinstance(records, list):
+            raise RuntimeError("Connection metadata is invalid.")
+        return records
+
+    def get_connection(self, connection_id: str) -> dict[str, Any] | None:
+        return next((record for record in self.list_connections() if record.get("connection_id") == connection_id), None)
+
+    def save_connection(self, record: dict[str, Any]) -> None:
+        records = [item for item in self.list_connections() if item.get("connection_id") != record["connection_id"]]
+        records.append(record)
+        self.storage.write_json(self.connections_index, records)
+
+    def delete_connection(self, connection_id: str) -> bool:
+        records = self.list_connections()
+        remaining = [item for item in records if item.get("connection_id") != connection_id]
+        if len(remaining) == len(records):
+            return False
+        self.storage.write_json(self.connections_index, remaining)
+        return True
+
     def delete_executions(self, execution_ids: set[str]) -> int:
         executions = self.list_executions()
         remaining = [item for item in executions if item.get("execution_id") not in execution_ids]
         self.storage.write_json(self.executions_index, remaining)
         return len(executions) - len(remaining)
+
+
+class MetadataService:
+    DATASET_REFERENCE_KEYS = FileSystemMetadataBackend.DATASET_REFERENCE_KEYS
+    stable_dataset_id = staticmethod(FileSystemMetadataBackend.stable_dataset_id)
+
+    def __init__(self, storage: FileSystemStorage):
+        self.storage = storage
+        manager = getattr(storage, "storage_manager", None)
+        self.backend = manager.get_metadata_backend() if manager else FileSystemMetadataBackend(storage)
+
+    def __getattr__(self, name: str):
+        return getattr(self.backend, name)
+
+    def delete_file(self, file_id: str) -> None:
+        return self.backend.delete_file(file_id)

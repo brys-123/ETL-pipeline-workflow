@@ -9,6 +9,7 @@ from flask_cors import CORS
 
 from .config import default_config
 from .routes import register_routes
+from .services.storage_manager import StorageManager
 from .services.storage_service import FileSystemStorage
 from .utils.helpers import utc_now
 
@@ -21,13 +22,22 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
 
     app.config["MAX_CONTENT_LENGTH"] = int(app.config["MAX_UPLOAD_SIZE_MB"]) * 1024 * 1024 + 1024 * 1024
     storage = FileSystemStorage(Path(app.config["STORAGE_ROOT"]))
+    storage_manager = StorageManager(storage, str(app.config["ACTIVE_STORAGE_BACKEND"]))
+    storage.storage_manager = storage_manager
     app.extensions["etl_storage"] = storage
-    storage.write_json(storage.metadata_dir / "settings.json", {
-        "storage_mode": app.config["STORAGE_MODE"],
-        "max_upload_size_mb": app.config["MAX_UPLOAD_SIZE_MB"],
-        "cors_origins": app.config["CORS_ORIGINS"],
-        "updated_at": utc_now(),
-    })
+    app.extensions["storage_manager"] = storage_manager
+    settings_path = storage.metadata_dir / "settings.json"
+    if storage_manager.active_backend == "filesystem":
+        existing_settings = storage.read_json(settings_path, {})
+        if not isinstance(existing_settings, dict):
+            existing_settings = {}
+        storage.write_json(settings_path, {
+            **existing_settings,
+            "storage_mode": app.config["STORAGE_MODE"],
+            "max_upload_size_mb": app.config["MAX_UPLOAD_SIZE_MB"],
+            "cors_origins": app.config["CORS_ORIGINS"],
+            "updated_at": utc_now(),
+        })
 
     CORS(app, resources={r"/api/*": {"origins": app.config["CORS_ORIGINS"]}})
     register_routes(app)

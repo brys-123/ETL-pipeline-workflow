@@ -117,14 +117,23 @@ def dashboard_data(dashboard_id: str):
     if dataset is None:
         return jsonify({"error": "The dashboard dataset could not be found."}), 404
     try:
-        preview = DatasetService(storage).preview(dataset, 1, 1000)
+        datasets = DatasetService(storage)
+        preview = datasets.preview(dataset, 1, 100)
+        rows = list(preview["rows"])
+        for page in range(2, min(preview["total_pages"], 10) + 1):
+            rows.extend(datasets.preview(dataset, page, 100)["rows"])
+        preview["rows"] = rows
+        preview["page_size"] = len(rows)
+        preview["page"] = 1
+        preview["total_pages"] = 1
+        preview["has_more"] = len(rows) < preview["total_rows"]
         return jsonify({
             "dashboard_id": dashboard_id,
             "dataset_id": dataset_id,
             "dataset_name": dataset.get("filename"),
             "source_type": dataset.get("source_type") or ("processed" if dataset.get("status") == "processed" else "imported"),
             "preview": preview,
-            "rows": preview.get("rows", []),
+            "rows": rows,
             "columns": preview.get("columns", []),
         })
     except (OSError, ValueError, TypeError, UnicodeDecodeError) as exc:
