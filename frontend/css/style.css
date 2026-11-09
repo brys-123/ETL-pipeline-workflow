@@ -754,7 +754,8 @@ body small { font-size: max(12px, 1em); }
 .settings-row strong { color: #172b22; font-size: 14px; }
 .settings-row small { color: #52645a; font-size: 13px; }
 .storage-section .panel-title-row p, .storage-status-grid dt,
-.storage-warning, .storage-config-form > label { color: #52645a; font-size: 13px; }
+.storage-warning { color: #52645a; font-size: 13px; }
+.storage-config-form > label { color: #172b22; font-size: 14px; }
 .storage-config-form input { color: #172b22; font-size: 15px; }
 .storage-action-status, .storage-active-badge { color: #14532d; font-size: 13px; }
 .storage-warning { background: #f0fdf4; }

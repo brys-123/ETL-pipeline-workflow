@@ -53,6 +53,12 @@ function nodeDefinition(type) {
   return definitions[type] || { title: 'Workflow node', group: 'Node', description: 'Configure this workflow node.', icon: 'bi-puzzle', color: 'transform' }
 }
 
+function nodeCardCategory(node, definition) {
+  if (node.type === 'mysql_input' || node.type === 'postgresql_input') return 'DB source'
+  if (node.type === 'api_input') return 'API source'
+  return definition.group === 'Transformation' ? 'Transform' : definition.group
+}
+
 function markUnsaved() {
   document.getElementById('canvas-status').textContent = 'Unsaved changes'
   runNodeStatuses = {}
@@ -103,7 +109,7 @@ function renderNodes() {
     const validationError = validationErrors[node.id] ? ' validation-error' : ''
     const statusClass = status ? ` execution-${escapeHTML(status)}` : ''
     const statusBadge = status ? `<span class="node-execution-status">${escapeHTML(status)}</span>` : ''
-    return `<article class="workflow-node${selected}${validationError}${statusClass}" data-node-type="${escapeHTML(node.type)}" data-node-id="${escapeHTML(node.id)}" style="left:${Number(node.position.x)}px;top:${Number(node.position.y)}px" aria-label="${escapeHTML(node.name)} node${status ? `, ${escapeHTML(status)}` : ''}" title="${escapeHTML(node.description || definition.description)}"><span class="node-type-icon ${definition.color}"><i class="bi ${definition.icon}"></i></span><span class="node-card-copy"><span class="node-card-category">${escapeHTML(definition.group)}</span><strong>${escapeHTML(node.name)}</strong><small>${escapeHTML(definition.description)}</small></span>${statusBadge}<button class="node-delete" data-delete-node="${escapeHTML(node.id)}" title="Remove node" aria-label="Remove ${escapeHTML(node.name)}"><i class="bi bi-x-lg"></i></button>${canInput(node) ? `<button class="node-port input" data-port="input" data-node-id="${escapeHTML(node.id)}" title="Connection input" aria-label="Input connection for ${escapeHTML(node.name)}"></button>` : ''}${canOutput(node) ? `<button class="node-port output" data-port="output" data-node-id="${escapeHTML(node.id)}" title="Drag to connect" aria-label="Output connection for ${escapeHTML(node.name)}"></button>` : ''}</article>`
+    return `<article class="workflow-node${selected}${validationError}${statusClass}" data-node-type="${escapeHTML(node.type)}" data-node-id="${escapeHTML(node.id)}" style="left:${Number(node.position.x)}px;top:${Number(node.position.y)}px" aria-label="${escapeHTML(node.name)} node${status ? `, ${escapeHTML(status)}` : ''}" title="${escapeHTML(node.description || definition.description)}"><span class="node-type-icon ${definition.color}"><i class="bi ${definition.icon}"></i></span><span class="node-card-copy"><span class="node-card-category">${escapeHTML(nodeCardCategory(node, definition))}</span><strong>${escapeHTML(node.name)}</strong><small>${escapeHTML(definition.description)}</small></span>${statusBadge}<button class="node-delete" data-delete-node="${escapeHTML(node.id)}" title="Remove node" aria-label="Remove ${escapeHTML(node.name)}"><i class="bi bi-x-lg"></i></button>${canInput(node) ? `<button class="node-port input" data-port="input" data-node-id="${escapeHTML(node.id)}" title="Connection input" aria-label="Input connection for ${escapeHTML(node.name)}"></button>` : ''}${canOutput(node) ? `<button class="node-port output" data-port="output" data-node-id="${escapeHTML(node.id)}" title="Drag to connect" aria-label="Output connection for ${escapeHTML(node.name)}"></button>` : ''}</article>`
   }).join('')
   document.getElementById('canvas-empty').hidden = nodes.length > 0
   drawEdges()

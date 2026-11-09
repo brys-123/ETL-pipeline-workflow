@@ -133,7 +133,7 @@
 .designer-heading h1 { color: #14532d; font-size: 28px; font-weight: 650; letter-spacing: 0; }
 .designer-heading > p:last-child { color: #52645a; font-size: 14px; }
 .designer-toolbar { border-color: #d5e4da; background: #fff; }
-.designer-toolbar > label > span { color: #14532d; font-size: 13px; font-weight: 600; letter-spacing: 0; }
+.designer-toolbar > label > span { color: #14532d; font-size: 14px; font-weight: 600; letter-spacing: 0; }
 .designer-toolbar input, .designer-toolbar select, .designer-toolbar > select { min-height: 38px; height: auto; border-color: #a9c2b1; color: #172b22; background: #fff; font-size: 14px; }
 .designer-toolbar input::placeholder { color: #52645a; opacity: 1; }
 .designer-toolbar .toolbar-button { min-height: 38px; color: #14532d; border-color: #a9c2b1; background: #fff; font-size: 13px; }
@@ -155,7 +155,7 @@
 .dashboard-report-header h2 { color: #14532d; font-size: 24px; font-weight: 600; }
 .dashboard-report-header #dashboard-report-subtitle { color: #52645a; font-size: 13px; }
 .dashboard-report-header #dashboard-report-date { color: #52645a; font-size: 12px; }
-.dashboard-filter { color: #14532d; font-size: 13px; font-weight: 600; }
+.dashboard-filter { color: #14532d; font-size: 14px; font-weight: 600; }
 .dashboard-filter select, .dashboard-filter input { min-height: 38px; height: auto; border-color: #a9c2b1; color: #172b22; background: #fff; font-size: 14px; }
 .dashboard-card-header { min-height: 48px; border-color: #d5e4da; }
 .dashboard-card-header h3 { color: #172b22; font-size: 15px; font-weight: 600; }
@@ -169,7 +169,7 @@
 .dashboard-empty strong { color: #14532d; font-size: 15px; }
 .dashboard-empty p { color: #52645a; font-size: 13px; }
 .designer-config-section { border-color: #d5e4da; background: #fff; }
-.designer-config-field, .designer-config-dataset { color: #172b22; font-size: 13px; font-weight: 500; }
+.designer-config-field, .designer-config-toggle, .designer-config-dataset { color: #172b22; font-size: 14px; font-weight: 500; }
 .designer-config-dataset strong { color: #52645a; font-size: 13px; }
 .designer-config-field input:not([type="checkbox"]):not([type="radio"]),
 .designer-config-field select, .designer-config-field textarea { min-height: 38px; border-color: #a9c2b1; color: #172b22; background: #fff; font-size: 14px; }
