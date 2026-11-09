@@ -58,8 +58,6 @@ def register_authentication_middleware(app) -> None:
         if request.path.startswith("/api/") and request.path not in _PUBLIC_API_PATHS:
             if not g.current_user:
                 return jsonify({"error": "Authentication is required."}), 401
-            if request.path.startswith("/api/storage/") and g.current_user.get("role") != "admin":
-                return jsonify({"error": "Administrator access is required."}), 403
         elif not request.path.startswith("/api/") and request.path not in _PUBLIC_PAGE_PATHS and not (
             request.path.startswith(("/css/", "/js/", "/vendor/"))
         ) and not g.current_user:

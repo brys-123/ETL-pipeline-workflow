@@ -1,4 +1,3 @@
-import ipaddress
 import shutil
 
 from flask import Blueprint, current_app, jsonify, request
@@ -13,19 +12,6 @@ SWITCH_WARNING = (
     "Changing the storage mode does not automatically transfer existing records between storage systems. "
     "Records created under the previous mode remain in that storage system."
 )
-
-
-def _local_request() -> bool:
-    try:
-        return ipaddress.ip_address(request.remote_addr or "").is_loopback
-    except ValueError:
-        return False
-
-
-def _require_local():
-    if not _local_request():
-        return jsonify({"error": "Storage configuration is only available from the local machine."}), 403
-    return None
 
 
 def _storage():
@@ -52,9 +38,6 @@ def _saved_password(manager) -> str | None:
 
 @storage_blueprint.get("/storage/config")
 def get_storage_config():
-    denied = _require_local()
-    if denied:
-        return denied
     try:
         return jsonify(_config_payload())
     except RuntimeError as exc:
@@ -63,9 +46,6 @@ def get_storage_config():
 
 @storage_blueprint.post("/storage/config")
 def save_storage_config():
-    denied = _require_local()
-    if denied:
-        return denied
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"error": "Configuration body must be a JSON object."}), 400
@@ -129,7 +109,10 @@ def storage_status():
         active_available = False
         error = str(exc) if isinstance(exc, PostgreSQLStorageError) else "The selected storage backend is unavailable."
 
+    driver_status = manager.postgresql.support_status()
     pg_status = {
+        "available": driver_status["available"],
+        "support_error": driver_status["error"],
         "connection_status": "not tested",
         "database_exists": None,
         "schema_initialized": None,
@@ -137,7 +120,10 @@ def storage_status():
         "error": None,
     }
     try:
-        if manager.configuration.password:
+        if not pg_status["available"]:
+            pg_status["connection_status"] = "driver unavailable"
+            pg_status["error"] = driver_status["error"]
+        elif manager.configuration.password:
             test = manager.postgresql.test_connection(
                 manager.configuration.postgres,
                 manager.configuration.password,
@@ -188,9 +174,6 @@ def storage_status():
 
 @storage_blueprint.post("/storage/postgresql/test-connection")
 def test_postgresql_connection():
-    denied = _require_local()
-    if denied:
-        return denied
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"error": "Connection test body must be a JSON object."}), 400
@@ -227,21 +210,24 @@ def test_postgresql_connection():
 
 @storage_blueprint.post("/storage/postgresql/initialize")
 def initialize_postgresql():
-    denied = _require_local()
-    if denied:
-        return denied
     manager = _storage()
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "Initialization body must be a JSON object."}), 400
+    password = payload.get("password")
+    if password is not None and (not isinstance(password, str) or len(password) > 1024):
+        return jsonify({"error": "Password must be text no longer than 1024 characters."}), 400
     if not acquire_storage_switch():
         return jsonify({"error": "Wait for the running workflow to finish before initializing the database."}), 409
     try:
         try:
-            result = manager.postgresql.initialize()
+            result = manager.postgresql.initialize(password)
         except ValueError as exc:
-            result = {"initialized": False, "message": str(exc)}
+            result = {"initialized": False, "error": str(exc), "message": str(exc)}
             manager.configuration.mark_initialization(result)
             return jsonify(result), 400
         except PostgreSQLStorageError as exc:
-            result = {"initialized": False, "message": str(exc)}
+            result = {"initialized": False, "error": str(exc), "message": str(exc)}
             manager.configuration.mark_initialization(result)
             return jsonify(result), 409 if "cannot create databases" in str(exc) or "incompatible" in str(exc) or "newer" in str(exc) else 503
         result["completed_at"] = utc_now()
@@ -254,9 +240,6 @@ def initialize_postgresql():
 
 @storage_blueprint.get("/storage/postgresql/schema-status")
 def postgresql_schema_status():
-    denied = _require_local()
-    if denied:
-        return denied
     try:
         return jsonify(_storage().postgresql.schema_status())
     except PostgreSQLStorageError as exc:
@@ -265,9 +248,6 @@ def postgresql_schema_status():
 
 @storage_blueprint.get("/storage/postgresql/migrations")
 def postgresql_migrations():
-    denied = _require_local()
-    if denied:
-        return denied
     try:
         return jsonify({"migrations": _storage().postgresql.list_migrations()})
     except PostgreSQLStorageError as exc:
@@ -276,10 +256,11 @@ def postgresql_migrations():
 
 @storage_blueprint.post("/storage/postgresql/activate")
 def activate_postgresql():
-    denied = _require_local()
-    if denied:
-        return denied
     manager = _storage()
+    if not manager.configuration.password:
+        return jsonify({
+            "error": "Save the PostgreSQL password in Settings before activation so the application can use it after switching storage."
+        }), 400
     try:
         manager.postgresql.test_connection(manager.configuration.postgres, manager.configuration.password)
         schema = manager.postgresql.schema_status()
@@ -303,9 +284,6 @@ def activate_postgresql():
 
 @storage_blueprint.post("/storage/filesystem/activate")
 def activate_filesystem():
-    denied = _require_local()
-    if denied:
-        return denied
     manager = _storage()
     required = (manager.filesystem.uploads_dir, manager.filesystem.processed_dir, manager.filesystem.workflows_dir, manager.filesystem.metadata_dir)
     if not all(path.is_dir() for path in required):

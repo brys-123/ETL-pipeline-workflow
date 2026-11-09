@@ -11,7 +11,7 @@ from .storage_service import FileSystemStorage
 DEFAULT_POSTGRES_CONFIG = {
     "host": "localhost",
     "port": 5432,
-    "database": "simple_etl_db",
+    "database": "simple_etl_studio_db",
     "username": "postgres",
     "maintenance_database": "postgres",
 }

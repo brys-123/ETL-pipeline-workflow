@@ -32,6 +32,11 @@ const canvasPresets = {
   'dark-analytics': { label: 'Dark Analytics', background: '#122219', cardBackground: '#1A3023', textColor: '#E4F1E8', secondaryColor: '#B4CABB', style: 'solid', padding: 28, gap: 14, radius: 10, shadows: false },
   'executive-report': { label: 'Executive Report', background: '#F5F8F5', cardBackground: '#FFFFFF', textColor: '#173B2A', secondaryColor: '#52685A', style: 'solid', padding: 36, gap: 18, radius: 6, shadows: false },
   'modern-glass': { label: 'Modern Glass', background: '#E8F3EC', cardBackground: '#F8FCF9', textColor: '#174D35', secondaryColor: '#486B55', style: 'soft-gradient', padding: 30, gap: 16, radius: 16, shadows: true },
+  'executive-analytics': { label: 'Executive Analytics', background: '#F4F7F5', cardBackground: '#FFFFFF', textColor: '#183B2B', secondaryColor: '#52685A', style: 'solid', padding: 34, gap: 16, radius: 8, shadows: false },
+  'modern-gradient': { label: 'Modern Gradient', background: '#E9F5EF', cardBackground: '#FFFFFF', textColor: '#174D35', secondaryColor: '#486B55', style: 'soft-gradient', padding: 30, gap: 16, radius: 14, shadows: true },
+  'soft-gradient': { label: 'Soft Gradient', background: '#EEF7F1', cardBackground: '#FFFFFF', textColor: '#174D35', secondaryColor: '#486B55', style: 'soft-gradient', padding: 28, gap: 14, radius: 12, shadows: true },
+  'data-focused': { label: 'Data Focused', background: '#F8FAF8', cardBackground: '#FFFFFF', textColor: '#20372A', secondaryColor: '#617568', style: 'solid', padding: 20, gap: 10, radius: 4, shadows: false },
+  'high-contrast': { label: 'High Contrast', background: '#FFFFFF', cardBackground: '#FFFFFF', textColor: '#10251A', secondaryColor: '#385343', style: 'solid', padding: 28, gap: 14, radius: 4, shadows: false },
 }
 const canvasDimensions = {
   standard: [1440, 900],
@@ -64,7 +69,8 @@ const labels = {
 }
 const state = {
   dashboard: blankDashboard(), datasets: [], dataset: null, columns: [], schema: [], rows: [],
-  charts: new Map(), selectedId: null, saved: [], undo: [], redo: [], rendering: false, filters: {},
+  charts: new Map(), chartResizeObserver: null,
+  selectedId: null, saved: [], undo: [], redo: [], rendering: false, filters: {},
   selectedDashboardIds: new Set(), componentInteraction: null,
 }
 
@@ -100,7 +106,8 @@ function defaultComponentSize(type) {
   if (type === 'kpi') return { width: 3, height: 125 }
   if (type === 'table') return { width: 12, height: 320 }
   if (type === 'pie' || type === 'donut') return { width: 4, height: 250 }
-  if (['text', 'image', 'section', 'filter'].includes(type)) return { width: 6, height: 180 }
+  if (type === 'filter') return { width: 3, height: 84 }
+  if (['text', 'image', 'section'].includes(type)) return { width: 6, height: 180 }
   if (type === 'divider') return { width: 12, height: 80 }
   return { width: 6, height: 255 }
 }
@@ -188,6 +195,7 @@ function makeComponent(type, schema = []) {
       legendAlign: 'center',
       legendItemSpacing: 10,
       filterMode: 'categorical',
+      searchable: true,
       text: 'Add a heading or helpful context for your dashboard.',
       headingLevel: 'h2',
       columns: [],
@@ -225,7 +233,7 @@ function safeDashboard(value) {
       ...componentDefaults,
       ...component,
       width,
-      height: Math.max(90, Math.min(1200, Number(component.height ?? legacySize.height) || legacySize.height)),
+      height: Math.max(component.type === 'filter' ? 42 : 90, Math.min(1200, Number(component.height ?? legacySize.height) || legacySize.height)),
       z_index: Number.isFinite(Number(component.z_index)) ? Number(component.z_index) : index,
       layout_section: typeof component.layout_section === 'string' ? component.layout_section : 'main',
       position: {
@@ -368,13 +376,16 @@ function snapshotRows() {
     const component = state.dashboard.components.find((item) => item.id === componentId)
     if (!component || !filter) return true
     const value = row[component.config.dimension]
-    if (filter.mode === 'categorical' && filter.value) return String(value ?? '') === filter.value
+    if (filter.mode === 'categorical' && filter.value) return filterFieldValue(value) === filter.value
+    if (filter.mode === 'multi' && filter.values?.length) return filter.values.includes(filterFieldValue(value))
     if (filter.mode === 'numeric') {
       const number = Number(value)
+      if (filter.min === '' && filter.max === '') return true
       if (!Number.isFinite(number)) return false
-      return (!filter.min || number >= Number(filter.min)) && (!filter.max || number <= Number(filter.max))
+      return (filter.min === '' || number >= Number(filter.min)) && (filter.max === '' || number <= Number(filter.max))
     }
     if (filter.mode === 'date') {
+      if (!filter.from && !filter.to) return true
       const date = new Date(value)
       if (Number.isNaN(date.valueOf())) return false
       return (!filter.from || date >= new Date(filter.from)) && (!filter.to || date <= new Date(`${filter.to}T23:59:59`))
@@ -561,7 +572,7 @@ function renderConfig() {
           ${layoutSectionField}
           ${configField('Horizontal position (grid columns)', 'layout-x', component.position.x, { type: 'number', min: 0, max: 11 })}
           ${configField('Vertical position (px)', 'layout-y', component.position.y, { type: 'number', min: 0, max: 5000, step: 20 })}
-          ${configField('Width (grid columns)', 'width', component.width, { type: 'number', min: 1, max: 12 })}
+          ${configField('Width (grid columns)', 'width', component.width, { type: 'number', min: minimumComponentWidth(component), max: 12 })}
           ${configField('Height (px)', 'height', component.height, { type: 'number', min: 110, max: 1000 })}
           ${configField('Minimum height (px)', 'minHeight', config.minHeight ?? 170, { type: 'number', min: 110, max: 800 })}
           ${configField('Maximum height (px)', 'maxHeight', config.maxHeight ?? 700, { type: 'number', min: 150, max: 1200 })}
@@ -596,8 +607,8 @@ function renderConfig() {
         <section class="designer-config-section"><h3>COMPONENT SIZE</h3>
           ${configField('Horizontal position (grid columns)', 'layout-x', component.position.x, { type: 'number', min: 0, max: 11 })}
           ${configField('Vertical position (px)', 'layout-y', component.position.y, { type: 'number', min: 0, max: 5000, step: 20 })}
-          ${configField('Width (grid columns)', 'width', component.width, { type: 'number', min: 1, max: 12 })}
-          ${configField('Height (px)', 'height', component.height, { type: 'number', min: 90, max: 1000 })}
+          ${configField('Width (grid columns)', 'width', component.width, { type: 'number', min: minimumComponentWidth(component), max: 12 })}
+          ${configField('Height (px)', 'height', component.height, { type: 'number', min: component.type === 'filter' ? 42 : 90, max: 1000 })}
           ${configField('Card background (optional)', 'appearance-background', component.appearance.background || state.dashboard.canvas.cardBackground, { type: 'color' })}
           ${configField('Card padding (px)', 'appearance-padding', component.appearance.padding, { type: 'number', min: 0, max: 48 })}
           ${configField('Corner radius (px)', 'appearance-radius', component.appearance.radius, { type: 'number', min: 0, max: 32 })}
@@ -629,15 +640,19 @@ function renderConfig() {
     }
     if (type === 'filter') {
       fields += configField('Filter field', 'dimension', config.dimension, { field: 'any' })
-      fields += configField('Filter type', 'filterMode', config.filterMode || 'categorical', { choices: [['categorical', 'Category'], ['date', 'Date range'], ['numeric', 'Numeric range']] })
+      fields += configField('Filter type', 'filterMode', config.filterMode || 'categorical', { choices: [['categorical', 'Single selection'], ['multi', 'Multiple selections'], ['date', 'Date range'], ['numeric', 'Numeric range']] })
+      if (['categorical', 'multi'].includes(config.filterMode || 'categorical')) {
+        fields += configToggle('Search filter values', 'searchable', config.searchable !== false)
+      }
+      if (config.filterMode === 'multi') fields += configToggle('Show select all', 'showSelectAll', config.showSelectAll !== false)
     }
     if (type === 'image') fields += `<label class="designer-config-field">Choose image<input id="config-image" type="file" accept="image/*"></label>`
     content.innerHTML = chartTypes.has(type) ? chartSections : `
       <section class="designer-config-section"><h3>CONTENT</h3>${fields}</section>
       <section class="designer-config-section"><h3>COMPONENT SIZE</h3>
         ${layoutSectionField}
-        ${configField('Width (grid columns)', 'width', component.width, { type: 'number', min: 1, max: 12 })}
-        ${configField('Height (px)', 'height', component.height, { type: 'number', min: 90, max: 1000 })}
+        ${configField('Width (grid columns)', 'width', component.width, { type: 'number', min: minimumComponentWidth(component), max: 12 })}
+        ${configField('Height (px)', 'height', component.height, { type: 'number', min: component.type === 'filter' ? 42 : 90, max: 1000 })}
         ${configField('Card background (optional)', 'appearance-background', component.appearance.background || state.dashboard.canvas.cardBackground, { type: 'color' })}
         ${configField('Card padding (px)', 'appearance-padding', component.appearance.padding, { type: 'number', min: 0, max: 48 })}
         ${configField('Corner radius (px)', 'appearance-radius', component.appearance.radius, { type: 'number', min: 0, max: 32 })}
@@ -709,12 +724,12 @@ function updateComponentConfig(key, value) {
       component.config.aggregation = 'sum'
     }
   } else if (key === 'width') {
-    component.width = Math.max(1, Math.min(12, Number(value) || 1))
+    component.width = Math.max(minimumComponentWidth(component), Math.min(12, Number(value) || 1))
     component.position.x = Math.min(component.position.x, 12 - component.width)
   } else if (key === 'layout-x') component.position.x = Math.max(0, Math.min(12 - component.width, Number(value) || 0))
   else if (key === 'layout-y') component.position.y = Math.max(0, Number(value) || 0)
   else if (key === 'layout-section') component.layout_section = value
-  else if (key === 'height') component.height = Math.max(90, Math.min(1200, Number(value) || 255))
+  else if (key === 'height') component.height = Math.max(component.type === 'filter' ? 42 : 90, Math.min(1200, Number(value) || 255))
   else if (key === 'title') component.title = value
   else if (key.startsWith('appearance-')) {
     const prop = key.slice('appearance-'.length)
@@ -727,6 +742,7 @@ function updateComponentConfig(key, value) {
     Object.assign(component, legacy)
   }
   else component.config[key] = value
+  if (component.type === 'filter' && (key === 'dimension' || key === 'filterMode')) delete state.filters[component.id]
   if (key === 'dimension' || key === 'seriesField' || key === 'filterMode' || key === 'aggregation' || key === 'measure' || key === 'measure2' || key === 'sizeMeasure' || key === 'size' || key === 'type' || key === 'chartPalette' || key === 'width' || key === 'layout-x' || key === 'layout-y' || key === 'layout-section' || key.startsWith('appearance-')) {
     renderComponents()
     renderConfig()
@@ -808,6 +824,14 @@ function addTemplate(name) {
 
 function validColor(value, fallback) {
   return /^#[\da-f]{6}$/i.test(value || '') ? value : fallback
+}
+
+function canvasBackground(background, style, dark = false) {
+  const end = dark ? '#172920' : '#FFFFFF'
+  if (style === 'horizontal-gradient') return `linear-gradient(90deg, ${background}, ${end})`
+  if (style === 'radial-gradient') return `radial-gradient(circle at top left, ${background}, ${end} 78%)`
+  if (style === 'soft-gradient') return `linear-gradient(145deg, ${background}, ${end})`
+  return background
 }
 
 function renderCanvasPresets() {
@@ -901,7 +925,9 @@ function applyCanvasSettings() {
     cardBackground: validColor(document.getElementById('canvas-card-background').value, '#FFFFFF'),
     textColor: validColor(document.getElementById('canvas-text-color').value, '#174D35'),
     secondaryColor: validColor(document.getElementById('canvas-secondary-color').value, '#486B55'),
-    style: document.getElementById('canvas-background-style').value === 'soft-gradient' ? 'soft-gradient' : 'solid',
+    style: ['soft-gradient', 'horizontal-gradient', 'radial-gradient'].includes(document.getElementById('canvas-background-style').value)
+      ? document.getElementById('canvas-background-style').value
+      : 'solid',
     padding: readNumber('canvas-padding', 28, 0, 100),
     gap: readNumber('canvas-gap', 14, 0, 60),
     radius: readNumber('canvas-radius', 10, 0, 40),
@@ -936,9 +962,7 @@ function applyTheme() {
   canvas.style.setProperty('--report-card-radius', `${Math.max(0, Math.min(40, Number(settings.radius) || 0))}px`)
   canvas.style.setProperty('--report-card-gap', `${Math.max(0, Math.min(60, Number(settings.gap) || 0))}px`)
   canvas.style.setProperty('--report-padding', `${Math.max(0, Math.min(100, Number(settings.padding) || 0))}px`)
-  canvas.style.setProperty('--report-background', settings.style === 'soft-gradient'
-    ? `linear-gradient(145deg, ${background}, ${dark ? '#172920' : '#FFFFFF'})`
-    : background)
+  canvas.style.setProperty('--report-background', canvasBackground(background, settings.style, dark))
   canvas.style.setProperty('--report-shadow', settings.shadows === false ? 'none' : '0 4px 14px -12px rgba(23,77,53,.4)')
   canvas.dataset.dashboardTheme = dark ? 'dark' : 'light'
   canvas.style.width = `${Math.max(320, Math.min(5000, Number(settings.width) || 1440))}px`
@@ -1083,16 +1107,18 @@ function legendOption(component, names = []) {
   const position = ['top', 'bottom', 'left', 'right'].includes(config.legendPosition) ? config.legendPosition : 'bottom'
   const orientation = config.legendOrientation === 'vertical' ? 'vertical' : 'horizontal'
   const positionAlign = ['left', 'center', 'right'].includes(config.legendAlign) ? config.legendAlign : 'center'
+  const chartNode = document.getElementById(`chart-${component.id}`)
+  const compact = chartNode && (chartNode.clientWidth < 360 || chartNode.clientHeight < 220)
   const align = positionAlign === 'center' ? 'auto' : positionAlign
   return {
     show: config.showLegend !== false,
     data: [...new Set(names.filter(Boolean))],
     orient: orientation,
     align,
-    itemGap: Math.max(0, Math.min(40, Number(config.legendItemSpacing) || 0)),
+    itemGap: Math.max(0, Math.min(40, Number(config.legendItemSpacing) || 0) - (compact ? 2 : 0)),
     textStyle: {
       color: chartTheme().muted,
-      fontSize: Math.max(8, Math.min(18, Number(config.legendTextSize) || 9)),
+      fontSize: Math.max(7, Math.min(18, (Number(config.legendTextSize) || 9) - (compact ? 1 : 0))),
     },
     ...(position === 'top' ? { top: 4, left: positionAlign } : {}),
     ...(position === 'bottom' ? { bottom: 2, left: positionAlign } : {}),
@@ -1146,7 +1172,9 @@ function chartOption(component) {
   const rows = displayRows()
   const { type, config } = component
   const colors = chartTheme()
-  const labelSize = Math.max(7, Math.min(16, Number(config.axisLabelSize) || 9))
+  const chartNode = document.getElementById(`chart-${component.id}`)
+  const compact = chartNode && (chartNode.clientWidth < 360 || chartNode.clientHeight < 220)
+  const labelSize = Math.max(7, Math.min(16, (Number(config.axisLabelSize) || 9) - (compact ? 1 : 0)))
   const labelColor = validColor(config.axisLabelColor, colors.muted)
   const gridColor = validColor(config.gridLineColor, colors.grid)
   const barSpacing = Number(config.barSpacing)
@@ -1169,9 +1197,9 @@ function chartOption(component) {
     ...(type === 'heatmap' ? {} : { legend }),
     grid: {
       top: (legendVisible && legendPosition === 'top' ? 34 : 6) + (Number(config.chartPadding) || 0),
-      left: (legendVisible && legendPosition === 'left' ? 78 : 32) + (Number(config.chartPadding) || 0),
-      right: (legendVisible && legendPosition === 'right' ? 78 : 6) + (Number(config.chartPadding) || 0),
-      bottom: (legendVisible && legendPosition === 'bottom' ? 42 : 22) + (Number(config.chartPadding) || 0),
+      left: (legendVisible && legendPosition === 'left' ? (compact ? 58 : 78) : (compact ? 26 : 32)) + (Number(config.chartPadding) || 0),
+      right: (legendVisible && legendPosition === 'right' ? (compact ? 58 : 78) : 6) + (Number(config.chartPadding) || 0),
+      bottom: (legendVisible && legendPosition === 'bottom' ? (compact ? 34 : 42) : 22) + (Number(config.chartPadding) || 0),
       containLabel: true,
     },
   }
@@ -1443,14 +1471,165 @@ function chartOption(component) {
   return { ...base, xAxis: { type: 'category', data: names, ...axis }, yAxis: { type: 'value', ...axis }, series: [{ name: config.measure || 'Value', type: 'bar', data: categoryData, label: { show: config.showDataLabels === true, formatter: labelFormatter } }] }
 }
 
+function filterFieldValue(value) {
+  return value === null || value === undefined || value === '' ? '(blank)' : String(value)
+}
+
+function createFilterControl(component) {
+  const { dimension = '', filterMode = 'categorical' } = component.config
+  const current = state.filters[component.id] || {}
+  const values = [...new Set(state.rows.map((row) => filterFieldValue(row[dimension])))]
+  const wrapper = document.createElement('div')
+  wrapper.className = 'dashboard-filter-control'
+  const setFilter = (filter) => {
+    const dropdownWasOpen = wrapper.querySelector('details')?.open || false
+    state.filters[component.id] = filter
+    renderComponents()
+    if (dropdownWasOpen) {
+      const dropdown = document.querySelector(`[data-filter-component-id="${CSS.escape(component.id)}"]`)
+      if (dropdown) dropdown.open = true
+    }
+    setStatus('Filters applied')
+  }
+  const labelled = (element, suffix) => {
+    element.setAttribute('aria-label', `${dimension || 'Filter'} ${suffix}`)
+    return element
+  }
+  if (filterMode === 'categorical' || filterMode === 'multi') {
+    if (filterMode === 'categorical') {
+      let control
+      if (component.config.searchable !== false) {
+        control = document.createElement('input')
+        control.type = 'search'
+        control.setAttribute('list', `filter-options-${component.id}`)
+        control.placeholder = 'All values'
+        control.value = current.value || ''
+        const options = document.createElement('datalist')
+        options.id = `filter-options-${component.id}`
+        values.forEach((value) => options.append(new Option(value, value)))
+        wrapper.append(options)
+        control.addEventListener('change', () => {
+          setFilter({ mode: filterMode, value: values.includes(control.value) ? control.value : '' })
+        })
+      } else {
+        control = document.createElement('select')
+        control.append(new Option('All values', ''))
+        values.forEach((value) => control.add(new Option(value, value)))
+        control.value = current.value || ''
+        control.addEventListener('change', () => setFilter({ mode: filterMode, value: control.value }))
+      }
+      wrapper.append(labelled(control, 'value'))
+      return wrapper
+    }
+
+    const details = document.createElement('details')
+    details.className = 'dashboard-filter-multiselect'
+    details.dataset.filterComponentId = component.id
+    const summary = document.createElement('summary')
+    const selected = new Set(Array.isArray(current.values) ? current.values : [])
+    const updateSummary = () => {
+      summary.textContent = selected.size ? `${selected.size} selected` : 'All values'
+    }
+    updateSummary()
+    const options = document.createElement('div')
+    options.className = 'dashboard-filter-options'
+    if (component.config.searchable !== false) {
+      const search = document.createElement('input')
+      search.type = 'search'
+      search.placeholder = 'Search values'
+      search.setAttribute('aria-label', `Search ${dimension} values`)
+      search.addEventListener('input', () => {
+        const query = search.value.trim().toLocaleLowerCase()
+        options.querySelectorAll('[data-filter-option]').forEach((option) => {
+          option.hidden = !option.dataset.filterOption.toLocaleLowerCase().includes(query)
+        })
+      })
+      options.append(search)
+    }
+    if (component.config.showSelectAll !== false) {
+      const selectAll = document.createElement('button')
+      selectAll.type = 'button'
+      selectAll.className = 'dashboard-filter-select-all'
+      selectAll.textContent = 'Select all'
+      selectAll.addEventListener('click', () => {
+        values.forEach((value) => selected.add(value))
+        updateSummary()
+        options.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = true })
+        setFilter({ mode: filterMode, values: [...selected] })
+      })
+      options.append(selectAll)
+    }
+    const clearSelection = document.createElement('button')
+    clearSelection.type = 'button'
+    clearSelection.className = 'dashboard-filter-select-all'
+    clearSelection.textContent = 'Clear selection'
+    clearSelection.addEventListener('click', () => {
+      selected.clear()
+      updateSummary()
+      options.querySelectorAll('input[type="checkbox"]').forEach((input) => { input.checked = false })
+      setFilter({ mode: filterMode, values: [] })
+    })
+    options.append(clearSelection)
+    values.forEach((value) => {
+      const label = document.createElement('label')
+      label.dataset.filterOption = value
+      const checkbox = document.createElement('input')
+      checkbox.type = 'checkbox'
+      checkbox.checked = selected.has(value)
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selected.add(value)
+        else selected.delete(value)
+        updateSummary()
+        setFilter({ mode: filterMode, values: [...selected] })
+      })
+      label.append(checkbox, document.createTextNode(value))
+      options.append(label)
+    })
+    details.append(summary, options)
+    wrapper.append(labelled(details, 'values'))
+    return wrapper
+  }
+
+  const controls = document.createElement('span')
+  controls.className = 'dashboard-filter-range'
+  const first = document.createElement('input')
+  const second = document.createElement('input')
+  if (filterMode === 'date') {
+    first.type = 'date'
+    second.type = 'date'
+    first.value = current.from || ''
+    second.value = current.to || ''
+    labelled(first, 'from date')
+    labelled(second, 'to date')
+    const update = () => setFilter({ mode: filterMode, from: first.value, to: second.value })
+    first.addEventListener('change', update)
+    second.addEventListener('change', update)
+  } else {
+    first.type = 'number'
+    second.type = 'number'
+    first.placeholder = 'Min'
+    second.placeholder = 'Max'
+    first.value = current.min ?? ''
+    second.value = current.max ?? ''
+    labelled(first, 'minimum')
+    labelled(second, 'maximum')
+    const update = () => setFilter({ mode: filterMode, min: first.value, max: second.value })
+    first.addEventListener('change', update)
+    second.addEventListener('change', update)
+  }
+  controls.append(first, second)
+  wrapper.append(controls)
+  return wrapper
+}
+
 function componentCard(component) {
   const card = document.createElement('article')
-  card.className = `dashboard-card${component.id === state.selectedId ? ' selected' : ''}${component.visible === false ? ' component-hidden' : ''}`
+  card.className = `dashboard-card${component.type === 'filter' ? ' dashboard-filter-card' : ''}${component.id === state.selectedId ? ' selected' : ''}${component.visible === false ? ' component-hidden' : ''}`
   card.dataset.componentId = component.id
   card.dataset.visible = String(component.visible !== false)
   updateComponentCardLayout(card, component)
-  card.style.height = `${Math.max(90, Math.min(1200, Number(component.height) || 255))}px`
-  const componentMinHeight = Math.max(90, Math.min(1000, Number(component.config.minHeight) || 120))
+  card.style.height = `${Math.max(component.type === 'filter' ? 42 : 90, Math.min(1200, Number(component.height) || 255))}px`
+  const componentMinHeight = component.type === 'filter' ? 42 : Math.max(90, Math.min(1000, Number(component.config.minHeight) || 120))
   const componentMaxHeight = Math.max(componentMinHeight, Math.max(150, Math.min(1200, Number(component.config.maxHeight) || 1200)))
   card.style.minHeight = `${componentMinHeight}px`
   card.style.maxHeight = `${componentMaxHeight}px`
@@ -1467,7 +1646,7 @@ function componentCard(component) {
   header.innerHTML = `<span class="dashboard-card-grab" data-editor-only title="Drag to reorder" aria-hidden="true"><i class="bi bi-grip-vertical"></i></span><h3>${escapeHTML(component.title || labels[component.type])}</h3><button type="button" data-editor-only data-card-action="visibility" title="${component.visible === false ? 'Show' : 'Hide'} in presentation" aria-label="${component.visible === false ? 'Show' : 'Hide'} component"><i class="bi ${component.visible === false ? 'bi-eye-slash' : 'bi-eye'}"></i></button><button type="button" data-editor-only data-card-action="up" title="Move forward" aria-label="Move forward"><i class="bi bi-arrow-up"></i></button><button type="button" data-editor-only data-card-action="down" title="Move backward" aria-label="Move backward"><i class="bi bi-arrow-down"></i></button><button type="button" data-editor-only data-card-action="duplicate" title="Duplicate component" aria-label="Duplicate component"><i class="bi bi-copy"></i></button><button type="button" data-editor-only data-card-action="delete" title="Delete component" aria-label="Delete component"><i class="bi bi-trash3"></i></button>`
   const body = document.createElement('div')
   body.className = 'dashboard-card-body'
-  body.style.padding = `var(--component-card-padding)`
+  body.style.padding = component.type === 'filter' ? '5px 7px' : 'var(--component-card-padding)'
   card.append(header, body)
   if (chartTypes.has(component.type)) {
     const chart = document.createElement('div')
@@ -1505,11 +1684,10 @@ function componentCard(component) {
   } else if (component.type === 'divider' || component.type === 'section') {
     body.innerHTML = component.type === 'divider' ? '<div class="dashboard-divider"></div>' : `<div class="dashboard-rich-text"><h2>${escapeHTML(component.title || 'Section')}</h2><p>Arrange related visualizations in this section.</p></div>`
   } else if (component.type === 'filter') {
-    const field = component.config.dimension
-    const mode = component.config.filterMode || 'categorical'
-    body.innerHTML = `<div class="dashboard-filter-preview"><i class="bi bi-funnel"></i> Filters dashboard by ${escapeHTML(field || 'selected field')} (${escapeHTML(mode)}).</div>`
+    body.replaceChildren(createFilterControl(component))
   }
   card.addEventListener('click', (event) => {
+    if (event.target.closest('.dashboard-filter-control')) return
     const action = event.target.closest('[data-card-action]')?.dataset.cardAction
     if (action) {
       event.stopPropagation()
@@ -1535,29 +1713,34 @@ function componentCard(component) {
       y: component.position.y,
     }
   })
-  const resizeHandle = document.createElement('button')
-  resizeHandle.type = 'button'
-  resizeHandle.className = 'dashboard-card-resize'
-  resizeHandle.dataset.editorOnly = ''
-  resizeHandle.setAttribute('aria-label', `Resize ${component.title}`)
-  resizeHandle.title = 'Drag to resize'
-  resizeHandle.innerHTML = '<i class="bi bi-arrows-angle-expand"></i>'
-  resizeHandle.addEventListener('pointerdown', (event) => {
-    event.preventDefault()
-    event.stopPropagation()
-    selectComponent(component.id)
-    pushUndo()
-    state.componentInteraction = {
-      kind: 'resize',
-      id: component.id,
-      pointerId: event.pointerId,
-      pointerX: event.clientX,
-      pointerY: event.clientY,
-      width: Number(component.width) || 6,
-      height: Number(component.height) || 255,
-    }
-  })
-  card.append(resizeHandle)
+  for (const edge of ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw']) {
+    const resizeHandle = document.createElement('button')
+    resizeHandle.type = 'button'
+    resizeHandle.className = `dashboard-card-resize dashboard-card-resize-${edge}`
+    resizeHandle.dataset.resizeEdge = edge
+    resizeHandle.dataset.editorOnly = ''
+    resizeHandle.setAttribute('aria-label', `Resize ${component.title} from ${edge}`)
+    resizeHandle.title = 'Drag to resize'
+    resizeHandle.addEventListener('pointerdown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      selectComponent(component.id)
+      pushUndo()
+      state.componentInteraction = {
+        kind: 'resize',
+        edge,
+        id: component.id,
+        pointerId: event.pointerId,
+        pointerX: event.clientX,
+        pointerY: event.clientY,
+        x: Number(component.position.x) || 0,
+        y: Number(component.position.y) || 0,
+        width: Number(component.width) || 6,
+        height: Number(component.height) || 255,
+      }
+    })
+    card.append(resizeHandle)
+  }
   return card
 }
 
@@ -1580,6 +1763,17 @@ function selectComponent(id) {
   renderConfig()
 }
 
+function minimumComponentWidth(component) {
+  if (component.type === 'table') return 4
+  if (chartTypes.has(component.type)) return 3
+  if (component.type === 'filter') return 2
+  return 1
+}
+
+function minimumComponentHeight(component) {
+  return component.type === 'filter' ? 42 : 90
+}
+
 function handleComponentPointerMove(event) {
   const interaction = state.componentInteraction
   if (!interaction || interaction.pointerId !== event.pointerId) return
@@ -1594,9 +1788,26 @@ function handleComponentPointerMove(event) {
     component.position.x = Math.max(0, Math.min(12 - width, Math.round(interaction.x + deltaX)))
     component.position.y = Math.max(0, Math.round((interaction.y + event.clientY - interaction.pointerY) / 20) * 20)
   } else {
+    const edge = interaction.edge
+    const minWidth = minimumComponentWidth(component)
     const deltaColumns = (event.clientX - interaction.pointerX) / Math.max(1, bounds.width) * 12
-    component.width = Math.max(1, Math.min(12 - component.position.x, Math.round(interaction.width + deltaColumns)))
-    component.height = Math.max(90, Math.min(1200, Math.round((interaction.height + event.clientY - interaction.pointerY) / 20) * 20))
+    const deltaRows = Math.round((event.clientY - interaction.pointerY) / 20) * 20
+    if (edge.includes('w')) {
+      const right = interaction.x + interaction.width
+      const left = Math.max(0, Math.min(right - minWidth, Math.round(interaction.x + deltaColumns)))
+      component.position.x = left
+      component.width = right - left
+    } else if (edge.includes('e')) {
+      component.width = Math.max(minWidth, Math.min(12 - interaction.x, Math.round(interaction.width + deltaColumns)))
+    }
+    if (edge.includes('n')) {
+      const bottom = interaction.y + interaction.height
+      const top = Math.max(0, Math.min(bottom - minimumComponentHeight(component), interaction.y + deltaRows))
+      component.position.y = top
+      component.height = bottom - top
+    } else if (edge.includes('s')) {
+      component.height = Math.max(minimumComponentHeight(component), Math.min(1200, interaction.height + deltaRows))
+    }
     card.style.height = `${component.height}px`
   }
   updateComponentCardLayout(card, component)
@@ -1642,51 +1853,54 @@ function moveOrDelete(id, action) {
 function renderFilters() {
   const bar = document.getElementById('dashboard-filter-bar')
   bar.replaceChildren()
-  state.dashboard.components.filter((component) => component.type === 'filter').forEach((component) => {
-    const field = component.config.dimension
-    const mode = component.config.filterMode || 'categorical'
-    const current = state.filters[component.id] || {}
-    const label = document.createElement('label')
-    label.className = 'dashboard-filter'
-    label.textContent = component.title || field || 'Filter'
-    let controls
-    if (mode === 'categorical') {
-      const values = [...new Set(state.rows.map((row) => String(row[field] ?? '')).filter(Boolean))]
-      controls = document.createElement('select')
-      controls.innerHTML = `<option value="">All values</option>${values.slice(0, 100).map((value) => `<option value="${escapeHTML(value)}">${escapeHTML(value)}</option>`).join('')}`
-      controls.value = current.value || ''
-      controls.addEventListener('change', () => { state.filters[component.id] = { ...current, mode, value: controls.value }; renderComponents(false) })
-    } else {
-      controls = document.createElement('span')
-      controls.style.display = 'flex'
-      controls.style.gap = '5px'
-      const first = document.createElement('input')
-      const second = document.createElement('input')
-      if (mode === 'date') {
-        first.type = 'date'; second.type = 'date'
-        first.value = current.from || ''; second.value = current.to || ''
-        first.setAttribute('aria-label', `${field} from date`); second.setAttribute('aria-label', `${field} to date`)
-        first.addEventListener('change', () => { state.filters[component.id] = { ...current, mode, from: first.value, to: second.value }; renderComponents(false) })
-        second.addEventListener('change', () => { state.filters[component.id] = { ...current, mode, from: first.value, to: second.value }; renderComponents(false) })
-      } else {
-        first.type = 'number'; second.type = 'number'; first.placeholder = 'Min'; second.placeholder = 'Max'
-        first.value = current.min || ''; second.value = current.max || ''
-        first.setAttribute('aria-label', `${field} minimum`); second.setAttribute('aria-label', `${field} maximum`)
-        first.addEventListener('change', () => { state.filters[component.id] = { ...current, mode, min: first.value, max: second.value }; renderComponents(false) })
-        second.addEventListener('change', () => { state.filters[component.id] = { ...current, mode, min: first.value, max: second.value }; renderComponents(false) })
-      }
-      controls.append(first, second)
-    }
-    label.append(controls)
-    bar.append(label)
+  const filters = state.dashboard.components.filter((component) => component.type === 'filter')
+  if (!filters.length) return
+  const summary = document.createElement('span')
+  summary.className = 'dashboard-filter-summary'
+  summary.textContent = `${filters.length} filter${filters.length === 1 ? '' : 's'}`
+  const reset = document.createElement('button')
+  reset.type = 'button'
+  reset.className = 'dashboard-filter-reset'
+  reset.textContent = 'Reset filters'
+  reset.disabled = !filters.some((component) => {
+    const filter = state.filters[component.id]
+    if (!filter) return false
+    if (filter.mode === 'categorical') return Boolean(filter.value)
+    if (filter.mode === 'multi') return Boolean(filter.values?.length)
+    if (filter.mode === 'date') return Boolean(filter.from || filter.to)
+    if (filter.mode === 'numeric') return filter.min !== '' || filter.max !== ''
+    return false
   })
+  reset.addEventListener('click', () => {
+    state.filters = {}
+    renderComponents()
+    setStatus('Filters reset')
+  })
+  bar.append(summary, reset)
 }
 
-function renderComponents(recreateCharts = true) {
+function renderComponents() {
   if (state.rendering) return
   state.rendering = true
   state.charts.forEach((chart) => chart.dispose())
   state.charts.clear()
+  state.chartResizeObserver?.disconnect()
+  if (!state.chartResizeObserver && globalThis.ResizeObserver) {
+    state.chartResizeObserver = new globalThis.ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const chartNode = entry.target
+        const component = state.dashboard.components.find((item) => item.id === chartNode.dataset.componentId)
+        const chart = state.charts.get(chartNode.dataset.componentId)
+        if (!component || !chart) continue
+        const layout = chartNode.clientWidth < 360 || chartNode.clientHeight < 220 ? 'compact' : 'regular'
+        if (chartNode.dataset.chartLayout !== layout) {
+          chartNode.dataset.chartLayout = layout
+          chart.setOption(chartOption(component), true)
+        }
+        chart.resize()
+      }
+    })
+  }
   const canvas = document.getElementById('dashboard-components')
   canvas.replaceChildren()
   applyTheme()
@@ -1709,6 +1923,8 @@ function renderComponents(recreateCharts = true) {
       canvas.append(card)
       if (chartTypes.has(component.type) && state.rows.length && state.columns.length) {
         const chartNode = card.querySelector('.dashboard-chart')
+        chartNode.dataset.componentId = component.id
+        chartNode.dataset.chartLayout = chartNode.clientWidth < 360 || chartNode.clientHeight < 220 ? 'compact' : 'regular'
         const issues = chartFieldIssues(component)
         if (issues.length) {
           chartNode.classList.add('dashboard-chart-warning')
@@ -1724,6 +1940,7 @@ function renderComponents(recreateCharts = true) {
           const chart = globalThis.echarts.init(chartNode, null, { renderer: 'canvas' })
           chart.setOption(chartOption(component), true)
           state.charts.set(component.id, chart)
+          state.chartResizeObserver?.observe(chartNode)
           requestAnimationFrame(() => chart.resize())
         } catch (error) {
           chartNode.textContent = `Could not render this visualization: ${error.message}`
@@ -1738,7 +1955,6 @@ function renderComponents(recreateCharts = true) {
     })
   }
   state.rendering = false
-  if (recreateCharts) renderFilters()
 }
 
 function autoArrange() {
@@ -1759,7 +1975,8 @@ function autoArrange() {
     else if (component.type === 'table') Object.assign(component, { width: 12, height: 320 })
     else if (component.type === 'pie' || component.type === 'donut') Object.assign(component, { width: 4, height: 250 })
     else if (component.type === 'divider') Object.assign(component, { width: 12, height: 80 })
-    else if (component.type === 'text' || component.type === 'section' || component.type === 'filter' || component.type === 'image') {
+    else if (component.type === 'filter') Object.assign(component, { width: 3, height: 84 })
+    else if (component.type === 'text' || component.type === 'section' || component.type === 'image') {
       Object.assign(component, { width: Math.min(12, Math.max(4, size.width)), height: Math.max(160, size.height) })
     } else Object.assign(component, { width: 6, height: 255 })
   })
@@ -2018,10 +2235,15 @@ async function createDashboardPNG() {
   if (!context) throw new Error('PNG export could not create a drawing surface.')
   context.scale(pixelRatio, pixelRatio)
   const colors = state.dashboard.canvas
-  if (colors.style === 'soft-gradient') {
-    const gradient = context.createLinearGradient(0, 0, width, height)
+  if (colors.style === 'soft-gradient' || colors.style === 'horizontal-gradient' || colors.style === 'radial-gradient') {
+    const endColor = colors.preset === 'dark-analytics' ? '#172920' : '#FFFFFF'
+    const gradient = colors.style === 'radial-gradient'
+      ? context.createRadialGradient(0, 0, 0, 0, 0, Math.max(width, height))
+      : colors.style === 'horizontal-gradient'
+        ? context.createLinearGradient(0, 0, width, 0)
+        : context.createLinearGradient(0, 0, width, height)
     gradient.addColorStop(0, validColor(colors.background, '#F1F8F3'))
-    gradient.addColorStop(1, colors.preset === 'dark-analytics' ? '#172920' : '#FFFFFF')
+    gradient.addColorStop(1, endColor)
     context.fillStyle = gradient
   } else context.fillStyle = validColor(colors.background, '#F1F8F3')
   context.fillRect(0, 0, width, height)
@@ -2169,6 +2391,25 @@ async function createDashboardPNG() {
             context.stroke()
           }
         }
+      }
+    } else if (component.type === 'filter') {
+      const filterControl = card.querySelector('.dashboard-filter-control')
+      if (filterControl) {
+        const controls = filterControl.querySelectorAll('input:not([type="checkbox"]), select, summary')
+        controls.forEach((control) => {
+          const rect = relativeRect(control)
+          const style = getComputedStyle(control)
+          context.fillStyle = validColor(colors.cardBackground, '#FFFFFF')
+          context.strokeStyle = colors.preset === 'dark-analytics' ? '#385B43' : '#D5EBDD'
+          roundedRect(context, rect.x, rect.y, rect.width, rect.height, 4)
+          context.fill()
+          context.stroke()
+          context.fillStyle = style.color || colors.textColor
+          context.font = `10px ${style.fontFamily || 'Arial'}`
+          context.textBaseline = 'middle'
+          const value = control.value || control.placeholder || control.getAttribute('aria-label') || control.textContent || 'All values'
+          context.fillText(value, rect.x + 6, rect.y + rect.height / 2, Math.max(0, rect.width - 12))
+        })
       }
     } else if (component.type === 'image') {
       const imageElement = card.querySelector('.dashboard-image')

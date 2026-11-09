@@ -16,14 +16,13 @@ From the project root:
 
 ```powershell
 py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-python -m pip install -r backend\requirements.txt
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -r backend\requirements.txt
 Set-Location frontend
 npm ci
 Set-Location ..
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
-python backend\app.py
+.\.venv\Scripts\python.exe backend\app.py
 ```
 
 Open http://127.0.0.1:5000. The API health check is at http://127.0.0.1:5000/api/health.
@@ -32,7 +31,7 @@ To stop the development server, press `Ctrl+C` in its PowerShell terminal.
 
 ## Authentication and accounts
 
-Authentication is enabled by default. New installations open at `/login`; select **Sign Up** to create a standard user account. Successful registration signs the user in. Sessions are stored by the active metadata backend, use HttpOnly session cookies and CSRF protection, expire after 30 minutes of inactivity, and can persist for up to 30 days when **Remember me** is selected. Profile pictures are limited to PNG, JPEG, or WebP images up to 2 MB.
+Authentication is enabled by default. New installations open at `/login`; select **Sign Up** to create a standard user account. Successful registration signs the user in. Accounts and sessions remain in File System storage when the application metadata backend is switched to PostgreSQL, so activating PostgreSQL does not log users out or require copying accounts. Sessions use HttpOnly cookies and CSRF protection, expire after 30 minutes of inactivity, and can persist for up to 30 days when **Remember me** is selected. Profile pictures are limited to PNG, JPEG, or WebP images up to 2 MB.
 
 Set a stable secret key in `.env` before running a persistent deployment. For example, generate one in PowerShell with:
 
@@ -50,9 +49,9 @@ python -m flask --app backend\app.py create-admin
 
 Public registration always creates a standard user. Administrators can use the protected `/api/admin/users`, `/api/admin/activity`, and `/api/admin/sessions` APIs. Password recovery is not available because no secure email recovery mechanism is configured.
 
-User-owned files, datasets, workflows, dashboards, and execution history are isolated by the authenticated account. Existing records are not automatically assigned to a new user and remain hidden until explicitly migrated. File System authentication data and profile images are stored under `STORAGE_ROOT\auth`; PostgreSQL authentication tables are applied by the existing **Initialize Database** action, which upgrades the schema without transferring File System users.
+User-owned files, datasets, workflows, dashboards, and execution history are isolated by the authenticated account. Existing records are not automatically assigned to a new user and remain hidden until explicitly migrated. Account, session, activity, and profile-image data remain under `STORAGE_ROOT\auth`, independently of the selected application metadata backend. PostgreSQL authentication tables are initialized for schema compatibility, but initialization does not transfer or remove File System accounts.
 
-For File System authentication, leave the active storage backend set to File System, register an account, and restart the application to verify account persistence. For PostgreSQL authentication, initialize and activate PostgreSQL in Settings before registering; users, sessions, and activity are then stored only in PostgreSQL. If active PostgreSQL is unavailable, authentication requests fail rather than falling back to File System.
+Register and sign in using the existing account regardless of whether File System or PostgreSQL is selected for application metadata. If PostgreSQL is unavailable while it is active, PostgreSQL-backed application data requests fail rather than silently falling back to File System.
 
 For Vite development, keep the Flask server running and start Vite in a second terminal with `npm run dev` from `frontend`. Vite proxies `/api` requests to `http://127.0.0.1:5000`; set `VITE_API_PROXY_TARGET` if Flask is running at another URL.
 
@@ -73,7 +72,7 @@ The application reads environment variables and an optional root `.env` file.
 | `AUTH_COOKIE_SECURE` | `false` | Set to `true` when serving the application over HTTPS |
 | `POSTGRES_HOST` | `localhost` | Initial PostgreSQL host (can also be set in Settings) |
 | `POSTGRES_PORT` | `5432` | Initial PostgreSQL port |
-| `POSTGRES_DB` | `simple_etl_db` | Initial application database |
+| `POSTGRES_DB` | `simple_etl_studio_db` | Initial application database |
 | `POSTGRES_USER` | `postgres` | Initial PostgreSQL username |
 | `POSTGRES_PASSWORD` | unset | Optional password source; alternatively save it in the OS credential store from Settings |
 | `POSTGRES_MAINTENANCE_DB` | `postgres` | Database used to inspect/create the application database |

@@ -16,6 +16,7 @@ from .middleware.authentication import register_authentication_middleware
 from .services.auth_service import AuthService
 from .services.storage_service import FileSystemStorage
 from .services.storage_manager import StorageConfiguration, StorageManager
+from .services.postgres_storage import postgres_driver_status
 from .utils.helpers import utc_now
 
 
@@ -35,6 +36,7 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
     configuration = StorageConfiguration(filesystem.metadata_dir / "storage_config.json")
     storage = StorageManager(filesystem, configuration)
     app.extensions["etl_storage"] = storage
+    app.extensions["postgresql_driver_status"] = postgres_driver_status()
     storage.write_json(storage.metadata_dir / "settings.json", {
         "storage_mode": app.config["STORAGE_MODE"],
         "max_upload_size_mb": app.config["MAX_UPLOAD_SIZE_MB"],
@@ -133,4 +135,9 @@ def create_app(overrides: dict[str, Any] | None = None) -> Flask:
         handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
         app.logger.addHandler(handler)
     app.logger.setLevel(logging.INFO)
+    if not app.extensions["postgresql_driver_status"]["available"]:
+        app.logger.warning(
+            "PostgreSQL support is disabled: %s",
+            app.extensions["postgresql_driver_status"]["error"],
+        )
     return app

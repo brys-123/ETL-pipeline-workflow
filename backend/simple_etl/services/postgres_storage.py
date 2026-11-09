@@ -231,9 +231,18 @@ def _psycopg_modules():
         from psycopg.types.json import Jsonb
     except ImportError as exc:
         raise PostgreSQLStorageError(
-            "PostgreSQL support is unavailable. Install the backend requirements and restart the application."
+            "The Psycopg PostgreSQL driver is missing from the Python environment running the application. "
+            "Install the backend requirements with that interpreter and restart the application."
         ) from exc
     return psycopg, sql, dict_row, Jsonb
+
+
+def postgres_driver_status() -> dict[str, Any]:
+    try:
+        _psycopg_modules()
+    except PostgreSQLStorageError as exc:
+        return {"available": False, "error": str(exc)}
+    return {"available": True, "error": None}
 
 
 def validate_postgres_config(config: object) -> tuple[dict[str, Any] | None, str | None]:
@@ -282,6 +291,9 @@ class PostgreSQLStorage:
     def __init__(self, configuration):
         self.configuration = configuration
 
+    def support_status(self) -> dict[str, Any]:
+        return postgres_driver_status()
+
     def _connect(self, database: str | None = None, config: dict[str, Any] | None = None, password: str | None = None):
         psycopg, _, dict_row, _ = _psycopg_modules()
         active = config or self.configuration.postgres
@@ -302,14 +314,41 @@ class PostgreSQLStorage:
                 row_factory=dict_row,
             )
         except psycopg.Error as exc:
-            from psycopg.errors import InvalidPassword, InsufficientPrivilege
+            from psycopg.errors import (
+                InsufficientPrivilege,
+                InvalidAuthorizationSpecification,
+                InvalidCatalogName,
+                InvalidPassword,
+            )
 
             if isinstance(exc, InvalidPassword):
                 raise PostgreSQLStorageError("Invalid database username or password.") from exc
+            if isinstance(exc, InvalidAuthorizationSpecification):
+                raise PostgreSQLStorageError("The configured PostgreSQL username does not exist or is not permitted to log in.") from exc
             if isinstance(exc, InsufficientPrivilege):
                 raise PostgreSQLStorageError("The configured PostgreSQL user does not have the required permissions.") from exc
+            if isinstance(exc, InvalidCatalogName):
+                raise PostgreSQLStorageError("The configured PostgreSQL database does not exist.") from exc
+            if isinstance(exc, psycopg.OperationalError):
+                details = str(exc).lower()
+                if "no password supplied" in details or "fe_sendauth" in details:
+                    raise PostgreSQLStorageError("A PostgreSQL password is required for this server.") from exc
+                if "connection refused" in details or "actively refused" in details:
+                    raise PostgreSQLStorageError(
+                        f"Connection refused by PostgreSQL at {active['host']}:{active['port']}. "
+                        "Check that the server is running and accepting connections."
+                    ) from exc
+                if "timeout expired" in details or "timed out" in details:
+                    raise PostgreSQLStorageError(
+                        f"PostgreSQL at {active['host']}:{active['port']} did not respond before the connection timed out."
+                    ) from exc
+                if "could not translate host name" in details or "name or service not known" in details:
+                    raise PostgreSQLStorageError(
+                        f"The PostgreSQL host name {active['host']} could not be resolved."
+                    ) from exc
             raise PostgreSQLStorageError(
-                "Unable to connect to PostgreSQL. Check the host, port and server status."
+                f"Unable to connect to PostgreSQL at {active['host']}:{active['port']}. "
+                "Check the connection settings and server status."
             ) from exc
 
     def test_connection(self, config: dict[str, Any], password: str | None = None) -> dict[str, Any]:
@@ -325,6 +364,7 @@ class PostgreSQLStorage:
                     (validated["database"],),
                 ).fetchone()
             database_accessible = False
+            schema = {"initialized": False, "schema_version": None}
             if row["database_exists"]:
                 application = self._connect(validated["database"], validated, password)
                 try:
@@ -333,21 +373,27 @@ class PostgreSQLStorage:
                     database_accessible = True
                 finally:
                     application.close()
+                try:
+                    schema = self.schema_status(password)
+                except PostgreSQLStorageError:
+                    pass
             return {
                 "connection_successful": True,
                 "database_exists": bool(row["database_exists"]),
                 "database_accessible": database_accessible,
                 "can_create_database": bool(row["can_create_database"]),
+                "schema_initialized": schema["initialized"],
+                "schema_version": schema["schema_version"],
                 "message": "PostgreSQL connection successful.",
             }
         finally:
             connection.close()
 
-    def initialize(self) -> dict[str, Any]:
+    def initialize(self, password: str | None = None) -> dict[str, Any]:
         config, error = validate_postgres_config(self.configuration.postgres)
         if error or config is None:
             raise ValueError(error or "Database configuration is invalid.")
-        maintenance = self._connect(config["maintenance_database"], config)
+        maintenance = self._connect(config["maintenance_database"], config, password)
         created = False
         try:
             maintenance.autocommit = True
@@ -376,7 +422,7 @@ class PostgreSQLStorage:
         finally:
             maintenance.close()
 
-        application = self._connect(config["database"], config)
+        application = self._connect(config["database"], config, password)
         try:
             with application:
                 migration_table = application.execute(
@@ -527,8 +573,8 @@ class PostgreSQLStorage:
         if any(indexes.get(name) != table for name, table in expected_indexes.items()):
             raise PostgreSQLStorageError("Database schema is incomplete: required indexes are missing.")
 
-    def schema_status(self) -> dict[str, Any]:
-        connection = self._connect()
+    def schema_status(self, password: str | None = None) -> dict[str, Any]:
+        connection = self._connect(password=password)
         try:
             with connection:
                 migration_table = connection.execute(

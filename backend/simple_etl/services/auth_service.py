@@ -149,8 +149,7 @@ class AuthService:
 
     @property
     def repository(self):
-        backend = self.manager.metadata_backend
-        return backend if backend is not None else FilesystemAuthRepository(self.manager.filesystem)
+        return FilesystemAuthRepository(self.manager.filesystem)
 
     @staticmethod
     def token_hash(token: str) -> str:

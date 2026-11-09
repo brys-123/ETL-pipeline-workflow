@@ -54,6 +54,85 @@ def test_unauthenticated_application_and_api_are_protected(auth_app):
     assert client.get("/api/auth/me").status_code == 401
 
 
+def test_authenticated_regular_user_can_configure_and_test_postgresql(auth_app, monkeypatch):
+    app, client = auth_app
+    assert client.get("/api/storage/config").status_code == 401
+    assert register(client).status_code == 200
+    storage = app.extensions["etl_storage"]
+    monkeypatch.setattr(
+        storage.postgresql,
+        "test_connection",
+        lambda _config, _password: {
+            "connection_successful": True,
+            "database_exists": True,
+            "can_create_database": False,
+            "message": "PostgreSQL connection successful.",
+        },
+    )
+    headers = {"X-CSRF-Token": client.get_cookie("simple_etl_csrf").value}
+
+    assert client.get("/api/storage/config").status_code == 200
+    assert client.get("/api/storage/status").status_code == 200
+    saved = client.post(
+        "/api/storage/config",
+        json={
+            "host": "localhost",
+            "port": 5432,
+            "database": "simple_etl_studio_db",
+            "username": "postgres",
+            "maintenance_database": "postgres",
+        },
+        headers=headers,
+    )
+    assert saved.status_code == 200
+
+    tested = client.post(
+        "/api/storage/postgresql/test-connection",
+        json={
+            "host": "localhost",
+            "port": 5432,
+            "database": "simple_etl_studio_db",
+            "username": "postgres",
+            "maintenance_database": "postgres",
+            "password": "transient-password",
+        },
+        headers=headers,
+    )
+    assert tested.status_code == 200
+
+
+def test_postgresql_activation_preserves_filesystem_login_and_session(auth_app, monkeypatch):
+    app, client = auth_app
+    assert register(client).status_code == 200
+    storage = app.extensions["etl_storage"]
+    monkeypatch.setattr(
+        storage.postgresql,
+        "schema_status",
+        lambda: {"initialized": True, "schema_version": 2},
+    )
+
+    storage.activate("postgresql")
+
+    status = client.get("/api/auth/status")
+    assert status.status_code == 200
+    assert status.json["authenticated"] is True
+    assert client.get("/api/auth/me").json["user"]["username"] == "sample_user"
+
+    client.post(
+        "/api/auth/logout",
+        json={},
+        headers={"X-CSRF-Token": client.get_cookie("simple_etl_csrf").value},
+    )
+    login_token = csrf(client)
+    login = client.post(
+        "/api/auth/login",
+        json={"identity": "sample_user", "password": PASSWORD},
+        headers={"X-CSRF-Token": login_token},
+    )
+    assert login.status_code == 200
+    assert login.json["authenticated"] is True
+
+
 def test_registration_hashes_password_and_restores_session(auth_app):
     app, client = auth_app
     response = register(client)

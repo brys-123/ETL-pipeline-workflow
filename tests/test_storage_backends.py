@@ -1,15 +1,18 @@
 import json
 
 import keyring
+import psycopg
 import pytest
 
 from simple_etl import create_app
+from simple_etl.services import postgres_storage
 from simple_etl.services.postgres_storage import (
     CURRENT_SCHEMA_VERSION,
     MIGRATION_NAME,
     PostgreSQLStorageError,
     PostgreSQLStorage,
     _REQUIRED_COLUMNS,
+    postgres_driver_status,
     validate_postgres_config,
 )
 
@@ -27,11 +30,49 @@ def storage_app(tmp_path, monkeypatch):
 
 
 def test_fresh_install_uses_filesystem_without_a_database(storage_app):
-    _app, client, storage = storage_app
+    app, client, storage = storage_app
 
     assert storage.active_backend == "filesystem"
+    assert storage.configuration.postgres["database"] == "simple_etl_studio_db"
+    assert app.extensions["postgresql_driver_status"] == postgres_driver_status()
+    assert client.get("/api/storage/status").json["postgresql"]["available"] is True
     assert client.get("/api/storage/status").json["storage_available"] is True
     assert client.get("/api/health").json["active_backend"] == "filesystem"
+
+
+def test_postgresql_driver_availability_is_reported_separately_from_server_status(monkeypatch):
+    monkeypatch.setattr(
+        postgres_storage,
+        "_psycopg_modules",
+        lambda: (_ for _ in ()).throw(PostgreSQLStorageError("Psycopg is missing.")),
+    )
+
+    assert postgres_storage.postgres_driver_status() == {
+        "available": False,
+        "error": "Psycopg is missing.",
+    }
+
+
+@pytest.mark.parametrize(
+    ("driver_message", "expected_message"),
+    [
+        ("connection failed: Connection refused", "Connection refused by PostgreSQL"),
+        ("fe_sendauth: no password supplied", "A PostgreSQL password is required"),
+    ],
+)
+def test_postgresql_connection_errors_are_actionable(storage_app, monkeypatch, driver_message, expected_message):
+    _app, _client, storage = storage_app
+
+    def fail_connect(**_kwargs):
+        raise psycopg.OperationalError(driver_message)
+
+    monkeypatch.setattr(psycopg, "connect", fail_connect)
+    with pytest.raises(PostgreSQLStorageError, match=expected_message):
+        storage.postgresql._connect(
+            "postgres",
+            storage.configuration.postgres,
+            "supplied-password",
+        )
 
 
 def test_database_config_is_saved_without_exposing_password(storage_app, monkeypatch):
@@ -93,6 +134,7 @@ def test_connection_test_is_safe_and_does_not_activate_postgresql(storage_app, m
 
 def test_failed_activation_keeps_filesystem_active(storage_app, monkeypatch):
     _app, client, storage = storage_app
+    monkeypatch.setattr(storage.configuration, "_password", "test-password")
     monkeypatch.setattr(
         storage.postgresql,
         "test_connection",
@@ -175,7 +217,7 @@ def test_storage_configuration_does_not_rewrite_existing_file_metadata(storage_a
     monkeypatch.setattr(
         storage.postgresql,
         "initialize",
-        lambda: {
+        lambda _password=None: {
             "initialized": True,
             "database_created": True,
             "schema_version": 1,
@@ -187,8 +229,42 @@ def test_storage_configuration_does_not_rewrite_existing_file_metadata(storage_a
     response = app.test_client().post("/api/storage/postgresql/initialize", json={})
 
     assert response.status_code == 200
+    assert storage.active_backend == "filesystem"
     assert files_index.read_text(encoding="utf-8") == original
     assert json.loads((storage.metadata_dir / "storage_config.json").read_text(encoding="utf-8"))["active_backend"] == "filesystem"
+
+
+def test_initialize_endpoint_uses_password_from_settings_form(storage_app, monkeypatch):
+    _app, client, storage = storage_app
+    received = {}
+    monkeypatch.setattr(
+        storage.postgresql,
+        "initialize",
+        lambda password=None: received.update(password=password) or {
+            "initialized": True,
+            "database_created": True,
+            "schema_version": CURRENT_SCHEMA_VERSION,
+            "message": "Database initialized successfully.",
+        },
+    )
+
+    response = client.post(
+        "/api/storage/postgresql/initialize",
+        json={"password": "transient-password"},
+    )
+
+    assert response.status_code == 200
+    assert received["password"] == "transient-password"
+    assert "transient-password" not in response.get_data(as_text=True)
+
+
+def test_activate_requires_a_persisted_password(storage_app):
+    _app, client, _storage_manager = storage_app
+
+    response = client.post("/api/storage/postgresql/activate", json={})
+
+    assert response.status_code == 400
+    assert "Save the PostgreSQL password" in response.json["error"]
 
 
 class FakeCursor:

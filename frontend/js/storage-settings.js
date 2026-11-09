@@ -3,6 +3,8 @@ import { api, showToast } from './app.js'
 const form = () => document.getElementById('postgres-config-form')
 let connectionTested = false
 let configSaved = false
+let testedPassword = ''
+let schemaInitialized = false
 
 function configFromForm(includePassword = false) {
   const values = new FormData(form())
@@ -49,9 +51,10 @@ function renderStatus(status, config) {
     : status.error || 'Active backend is unavailable'
   document.getElementById('storage-db-connection').textContent = status.postgresql.connection_status
   document.getElementById('storage-db-name').textContent = status.postgresql.database || config.database
-  document.getElementById('storage-schema-status').textContent = status.postgresql.schema_initialized === true
-    ? 'Initialized'
-    : status.postgresql.schema_initialized === false ? 'Not initialized' : 'Unknown'
+  document.getElementById('storage-schema-status').textContent =
+    status.postgresql.schema_initialized === true || schemaInitialized
+      ? 'Initialized'
+      : status.postgresql.schema_initialized === false ? 'Not initialized' : 'Unknown'
   document.getElementById('storage-schema-version').textContent = status.postgresql.schema_version
     ? `Version ${status.postgresql.schema_version}`
     : 'No schema version'
@@ -86,7 +89,16 @@ function renderStatus(status, config) {
   document.getElementById('setting-upload-limit').textContent = `${status.max_upload_size_mb} MB`
   const initializationButton = document.getElementById('initialize-postgres')
   initializationButton.disabled = !connectionTested
-  document.getElementById('activate-postgres').disabled = status.postgresql.schema_initialized !== true
+  const initialized = status.postgresql.schema_initialized === true || schemaInitialized
+  const canActivate = initialized && status.postgresql.password_saved
+  document.getElementById('activate-postgres').disabled = !canActivate
+  document.getElementById('postgres-action-note').textContent = !connectionTested
+    ? 'Test the PostgreSQL connection before initializing the database.'
+    : initialized && !status.postgresql.password_saved
+      ? 'Database initialized. Save the PostgreSQL password before activation.'
+      : initialized
+        ? 'PostgreSQL is ready to activate.'
+        : 'Initialize the database before activation.'
 }
 
 async function loadStorageSettings() {
@@ -144,6 +156,8 @@ async function testConnection() {
       method: 'POST',
       body: JSON.stringify(configFromForm(true)),
     })
+    testedPassword = form().elements.namedItem('password').value
+    schemaInitialized = result.schema_initialized === true
     connectionTested = configSaved
     const databaseStatus = result.database_exists ? 'Application database exists.' : 'Application database does not exist yet.'
     const permissionStatus = result.database_exists || result.can_create_database
@@ -160,6 +174,8 @@ async function testConnection() {
     }
   } catch (error) {
     connectionTested = false
+    testedPassword = ''
+    schemaInitialized = false
     showResult(error.message || 'PostgreSQL connection failed.', true)
     await loadStorageSettings()
   } finally {
@@ -172,8 +188,12 @@ async function initializeDatabase() {
   button.disabled = true
   showResult('Initializing PostgreSQL schema. Existing database records will be preserved.')
   try {
-    const result = await api('/api/storage/postgresql/initialize', { method: 'POST', body: '{}' })
-    showResult(result.message)
+    const result = await api('/api/storage/postgresql/initialize', {
+      method: 'POST',
+      body: JSON.stringify(testedPassword ? { password: testedPassword } : {}),
+    })
+    schemaInitialized = result.initialized === true
+    showResult(`${result.message} Active storage was not changed.`)
     await loadStorageSettings()
     document.getElementById('initialize-postgres').disabled = false
   } catch (error) {
@@ -231,9 +251,11 @@ export function initStorageSettings() {
   document.getElementById('activate-postgres').addEventListener('click', activatePostgreSQL)
   document.getElementById('activate-filesystem').addEventListener('click', activateFileSystem)
   document.getElementById('remove-postgres-password').addEventListener('click', removeSavedPassword)
-  form().addEventListener('input', () => {
-    configSaved = false
+  form().addEventListener('input', (event) => {
+    if (event.target.name !== 'password') configSaved = false
     connectionTested = false
+    testedPassword = ''
+    schemaInitialized = false
     document.getElementById('initialize-postgres').disabled = true
   })
 }
